@@ -24,20 +24,15 @@ import {
   closeBracketsKeymap,
   completionKeymap,
 } from "@codemirror/autocomplete";
-import {
-  search,
-  setSearchQuery,
-  SearchQuery,
-  findNext,
-  findPrevious,
-  closeSearchPanel,
-} from "@codemirror/search";
+import { search } from "@codemirror/search";
 import { useAppStore, getDocById, getActiveDoc } from "../../stores/appStore";
+import { useSearchStore } from "../../stores/searchStore";
 import { useSettingsStore } from "../../stores/settingsStore";
-import { registerEditor, type EditorApi } from "../../utils/editorBridge";
+import { registerEditor } from "../../utils/editorBridge";
 import { showMessage } from "../../stores/dialogStore";
 import { invoke } from "@tauri-apps/api/core";
 import { createEditorTheme } from "./editorTheme";
+import { searchHighlightField, setSearchHighlight } from "./searchHighlight";
 
 interface Props {
   docId: string;
@@ -66,6 +61,7 @@ function buildExtensions(isDark: boolean): Extension[] {
     bracketMatching(),
     closeBrackets(),
     search({ top: true }),
+    searchHighlightField,
     markdown({ base: markdownLanguage, codeLanguages: languages }),
     EditorState.allowMultipleSelections.of(true),
     indentUnit.of(" ".repeat(settings.tabSize)),
@@ -149,77 +145,8 @@ export function CodeMirrorEditor({ docId, isDark }: Props) {
     }
     view.focus();
 
-    // 向全局暴露编辑器能力
-    const api: EditorApi = {
-      wrapSelection: (before, after = before, placeholderText = "") => {
-        const { state: current } = view;
-        const range = current.selection.main;
-        const selected = current.sliceDoc(range.from, range.to);
-        const text = selected || placeholderText;
-        const insert = `${before}${text}${after}`;
-        view.dispatch({
-          changes: { from: range.from, to: range.to, insert },
-          selection: {
-            anchor: range.from + before.length,
-            head: range.from + before.length + text.length,
-          },
-        });
-        view.focus();
-      },
-      insertText: (text) => {
-        const range = view.state.selection.main;
-        view.dispatch({
-          changes: { from: range.from, to: range.to, insert: text },
-          selection: { anchor: range.from + text.length },
-        });
-        view.focus();
-      },
-      focus: () => view.focus(),
-      scrollToLine: (line) => {
-        const doc = view.state.doc;
-        const clamped = Math.min(Math.max(1, line + 1), doc.lines);
-        const info = doc.line(clamped);
-        view.dispatch({
-          selection: { anchor: info.from },
-          effects: EditorView.scrollIntoView(info.from, { y: "start", yMargin: 16 }),
-        });
-        view.focus();
-      },
-      applySearch: (query, caseSensitive) => {
-        if (!query) {
-          view.dispatch({ effects: setSearchQuery.of(new SearchQuery({ search: "" })) });
-          return;
-        }
-        view.dispatch({
-          effects: setSearchQuery.of(
-            new SearchQuery({ search: query, caseSensitive, literal: true }),
-          ),
-        });
-        findNext(view);
-      },
-      findNext: () => {
-        findNext(view);
-      },
-      findPrevious: () => {
-        findPrevious(view);
-      },
-      clearSearch: () => {
-        view.dispatch({ effects: setSearchQuery.of(new SearchQuery({ search: "" })) });
-        closeSearchPanel(view);
-      },
-      getScrollMetrics: () => {
-        const el = view.scrollDOM;
-        return {
-          scrollTop: el.scrollTop,
-          scrollHeight: el.scrollHeight,
-          clientHeight: el.clientHeight,
-        };
-      },
-      setScrollTop: (top) => {
-        view.scrollDOM.scrollTop = top;
-      },
-    };
-    registerEditor(api);
+    // 向全局暴露编辑器实例（编辑器命令 / 搜索 / 大纲共用）
+    registerEditor(view);
 
     // 记录滚动位置（节流）
     let scrollTimer: number | null = null;
@@ -255,6 +182,21 @@ export function CodeMirrorEditor({ docId, isDark }: Props) {
     });
     syncingRef.current = false;
   }, [content]);
+
+  /* ------------------------ 搜索高亮同步 ------------------------ */
+  const searchMatches = useSearchStore((s) => s.matches);
+  const searchCurrent = useSearchStore((s) => s.current);
+  const searchVisible = useSearchStore((s) => s.visible);
+  useEffect(() => {
+    const view = viewRef.current;
+    if (!view) return;
+    view.dispatch({
+      effects: setSearchHighlight.of({
+        ranges: searchVisible ? searchMatches : [],
+        current: searchCurrent,
+      }),
+    });
+  }, [searchMatches, searchCurrent, searchVisible]);
 
   /* ------------------------------ 设置联动 ------------------------------ */
   useEffect(() => {

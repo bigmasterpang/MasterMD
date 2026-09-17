@@ -15,6 +15,7 @@ export const DEFAULT_SETTINGS: Settings = {
   autoSaveInterval: 30,
   recentFilesLimit: 10,
   shortcuts: { ...DEFAULT_SHORTCUTS },
+  autoCheckUpdate: true,
 };
 
 interface SettingsStore extends Settings {
@@ -82,5 +83,6 @@ export function pickSettings(state: SettingsStore): Settings {
     autoSaveInterval: state.autoSaveInterval,
     recentFilesLimit: state.recentFilesLimit,
     shortcuts: state.shortcuts,
+    autoCheckUpdate: state.autoCheckUpdate,
   };
 }

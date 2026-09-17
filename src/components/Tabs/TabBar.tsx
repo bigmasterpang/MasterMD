@@ -11,7 +11,7 @@ export function TabBar() {
   if (docs.length <= 1) return null;
 
   return (
-    <div className="flex h-8 shrink-0 items-stretch gap-0.5 overflow-x-auto border-b border-line bg-app px-1">
+    <div className="flex h-9 shrink-0 items-stretch gap-1 overflow-x-auto border-b border-line bg-app px-2 pt-1">
       {docs.map((doc) => {
         const active = doc.id === activeId;
         return (
@@ -24,19 +24,28 @@ export function TabBar() {
             onAuxClick={(event) => {
               if (event.button === 1) void closeDocWithConfirm(doc.id);
             }}
-            className={`group flex max-w-[200px] shrink-0 cursor-pointer items-center gap-1.5 self-center rounded-md px-2.5 py-1 text-[12px] transition-colors ${
+            className={`group flex max-w-[220px] shrink-0 cursor-pointer items-center gap-1.5 self-end rounded-t-md border border-b-0 px-2.5 py-1.5 text-[12px] transition-colors ${
               active
-                ? "bg-panel text-fg shadow-[var(--shadow-sm)]"
-                : "text-muted hover:bg-hover"
+                ? "border-line bg-panel font-medium text-fg"
+                : "border-line-strong/60 bg-hover text-fg/75 hover:bg-active hover:text-fg"
             }`}
+            style={
+              active
+                ? { boxShadow: "inset 0 2px 0 0 var(--accent)" }
+                : undefined
+            }
           >
             <Icon
               name={doc.filePath ? "file-text" : "file-plus"}
               size={13}
-              className={active ? "text-accent" : "text-faint"}
+              className={active ? "text-accent" : "text-muted"}
             />
             <span className="truncate">{doc.filePath ? fileName(doc.filePath) : "未命名"}</span>
-            {doc.isDirty ? <span className="text-accent">●</span> : null}
+            {doc.isDirty ? (
+              <span className="text-accent" title="有未保存的更改">
+                ●
+              </span>
+            ) : null}
             <button
               type="button"
               title="关闭标签 (Ctrl+W)"
@@ -44,7 +53,9 @@ export function TabBar() {
                 event.stopPropagation();
                 void closeDocWithConfirm(doc.id);
               }}
-              className="rounded p-0.5 text-faint opacity-0 transition-opacity hover:bg-active hover:text-fg group-hover:opacity-100"
+              className={`rounded p-0.5 transition-colors hover:bg-active hover:text-fg ${
+                active ? "text-muted" : "text-muted/70"
+              }`}
             >
               <Icon name="x" size={12} />
             </button>

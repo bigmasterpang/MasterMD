@@ -372,6 +372,137 @@ function mathPlugin(md: MarkdownItType): void {
     `<span class="math-inline" data-tex="${escapeHtml(tokens[idx].content)}"></span>`;
 }
 
+/** 提示块（GitHub Alerts 风格）：> [!NOTE] 标题 */
+const CALLOUT_META: Record<string, { label: string; icon: string }> = {
+  note: { label: "提示", icon: "ℹ" },
+  tip: { label: "技巧", icon: "✦" },
+  important: { label: "重要", icon: "❢" },
+  warning: { label: "警告", icon: "⚠" },
+  caution: { label: "注意", icon: "⛔" },
+  info: { label: "信息", icon: "ℹ" },
+  success: { label: "成功", icon: "✔" },
+  question: { label: "疑问", icon: "?" },
+  quote: { label: "引用", icon: "❝" },
+  danger: { label: "危险", icon: "⚡" },
+};
+
+function calloutPlugin(md: MarkdownItType): void {
+  // 需在 inline 阶段之后：此时 inline token 的 children 才已生成
+  md.core.ruler.after("inline", "callouts", (state) => {
+    const tokens = state.tokens;
+    for (let i = 0; i < tokens.length; i++) {
+      if (tokens[i].type !== "blockquote_open") continue;
+
+      // 配对找到对应的 blockquote_close
+      let depth = 0;
+      let closeIdx = -1;
+      for (let j = i; j < tokens.length; j++) {
+        if (tokens[j].type === "blockquote_open") depth += 1;
+        else if (tokens[j].type === "blockquote_close") {
+          depth -= 1;
+          if (depth === 0) {
+            closeIdx = j;
+            break;
+          }
+        }
+      }
+      if (closeIdx < 0) continue;
+
+      const pOpen = tokens[i + 1];
+      const inline = tokens[i + 2];
+      if (
+        !pOpen ||
+        pOpen.type !== "paragraph_open" ||
+        !inline ||
+        inline.type !== "inline"
+      ) {
+        continue;
+      }
+      const match = /^\[!([A-Za-z]+)\][ \t]*([^\n]*)\r?\n?/.exec(inline.content);
+      if (!match) continue;
+      const type = match[1].toLowerCase();
+      const meta = CALLOUT_META[type];
+      if (!meta) continue;
+
+      const customTitle = match[2].trim();
+      const title = customTitle || meta.label;
+
+      // 剥离标记文本
+      const stripped = inline.content.slice(match[0].length);
+      inline.content = stripped;
+      const first = inline.children?.[0];
+      if (first && first.type === "text") {
+        first.content = first.content.slice(match[0].length);
+        if (!first.content && (inline.children?.length ?? 0) > 1) {
+          inline.children?.shift();
+        }
+      }
+
+      // blockquote_open / _close 替换为 callout 容器
+      const openToken = new state.Token("html_block", "", 0);
+      openToken.block = true;
+      openToken.content = `<div class="callout callout-${type}"><div class="callout-title"><span class="callout-icon">${meta.icon}</span><span>${escapeHtml(
+        title,
+      )}</span></div><div class="callout-body">`;
+      tokens[i] = openToken;
+
+      const closeToken = new state.Token("html_block", "", 0);
+      closeToken.block = true;
+      closeToken.content = "</div></div>";
+      tokens[closeIdx] = closeToken;
+
+      // 空正文时移除空段落
+      if (!stripped.trim()) {
+        tokens.splice(i + 1, 3);
+        // closeIdx 已被替换为 html_block，位置略有偏移，重新定位即可
+        continue;
+      }
+    }
+    return true;
+  });
+}
+
+/** 上下标：^上标^ 与 ~下标~（~~删除线~~ 不受影响） */
+function subSupPlugin(md: MarkdownItType): void {
+  const makeRule =
+    (kind: "sub" | "sup") =>
+    (state: import("markdown-it").StateInline, silent: boolean): boolean => {
+      const marker = kind === "sub" ? 0x7e : 0x5e; // ~ / ^
+      const start = state.pos;
+      if (state.src.charCodeAt(start) !== marker) return false;
+      // 双波浪线交给删除线处理
+      if (kind === "sub" && state.src.charCodeAt(start + 1) === marker) return false;
+
+      let end = start + 1;
+      const max = state.posMax;
+      while (end < max) {
+        const code = state.src.charCodeAt(end);
+        if (code === 0x5c) {
+          end += 2;
+          continue;
+        }
+        if (code === marker) break;
+        if (code === 0x20 || code === 0x0a || code === 0x09) return false;
+        end += 1;
+      }
+      if (end >= max || state.src.charCodeAt(end) !== marker) return false;
+      if (end === start + 1) return false;
+      if (silent) return true;
+
+      const content = state.src.slice(start + 1, end);
+      const open = state.push(kind, kind, 1);
+      open.markup = kind === "sub" ? "~" : "^";
+      const text = state.push("text", "", 0);
+      text.content = content;
+      state.push(kind, kind, -1);
+      state.pos = end + 1;
+      return true;
+    };
+
+  md.inline.ruler.after("escape", "sub", makeRule("sub"));
+  md.inline.ruler.after("sub", "sup", makeRule("sup"));
+}
+
 /* ------------------------------------------------------------------ */
 /* 渲染入口                                                            */
 /* ------------------------------------------------------------------ */
@@ -389,6 +520,8 @@ let currentCollector = new HeadingCollector();
 md.use(taskListPlugin);
 md.use((instance) => headingPlugin(instance, currentCollector));
 md.use(mathPlugin);
+md.use(calloutPlugin);
+md.use(subSupPlugin);
 
 // 外链统一在应用外打开（由预览层拦截），这里补上 rel 保证安全
 const defaultLinkOpen =
@@ -442,8 +575,13 @@ export function renderMarkdown(source: string): RenderResult {
   };
 }
 
-/** 只解析标题结构（源码模式下无需生成 HTML，避免大文档浪费） */
-export function parseHeadings(source: string): HeadingItem[] {
+/** 解析为 markdown-it token 序列（导出 DOCX 使用，已剥离 front matter） */
+export function parseDoc(source: string): Token[] {
+  const { body } = extractFrontMatter(source);
+  return md.parse(body, {});
+}
+
+/** 只解析标题结构（源码模式下无需生成 HTML，避免大文档浪费） */export function parseHeadings(source: string): HeadingItem[] {
   const { body, raw } = extractFrontMatter(source);
   const offset = raw === null ? 0 : raw.split(/\r?\n/).length + 2;
   const tokens = md.parse(body, {});

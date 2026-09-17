@@ -45,6 +45,11 @@ pub fn run() {
                 .skip(1)
                 .find(|a| !a.starts_with('-') && std::path::Path::new(a).exists());
             app.manage(StartupFile(Mutex::new(startup)));
+
+            // 关闭 WebView2 自带快捷键，避免与应用的 Ctrl+F / Ctrl+P / F3 冲突
+            #[cfg(windows)]
+            commands::pdf::disable_browser_accelerators(&handle);
+            let _ = &handle;
             Ok(())
         })
         .on_window_event(|window, event| {
@@ -63,6 +68,7 @@ pub fn run() {
             confirm_close,
             file::read_markdown_file,
             file::write_markdown_file,
+            file::write_binary_file,
             file::save_file_dialog,
             file::path_exists,
             file::read_file_as_base64,
@@ -73,6 +79,8 @@ pub fn run() {
             image::save_pasted_image,
             watch::watch_file,
             watch::unwatch_file,
+            #[cfg(windows)]
+            commands::pdf::print_to_pdf,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -1,15 +1,35 @@
-import type { ReactNode } from "react";
 import { Icon, type IconName } from "../common/Icon";
+import { DropdownMenu, type MenuGroup } from "../common/DropdownMenu";
 import { useAppStore } from "../../stores/appStore";
-import { useDialogStore } from "../../stores/dialogStore";
+import { useDialogStore, showMessage } from "../../stores/dialogStore";
 import { useSettingsStore } from "../../stores/settingsStore";
+import { useSearchStore } from "../../stores/searchStore";
 import type { ThemeMode, ViewMode } from "../../types";
 import {
-  getEditor,
-} from "../../utils/editorBridge";
-import {
-  exportHtmlFile,
-} from "../../utils/exportHtml";
+  insertCallout,
+  insertCodeBlock,
+  insertDateTime,
+  insertHorizontalRule,
+  insertImage,
+  insertLink,
+  insertTable,
+  insertToc,
+  setHeading,
+  shiftHeading,
+  toggleBold,
+  toggleInlineCode,
+  toggleItalic,
+  toggleList,
+  toggleQuote,
+  toggleStrikethrough,
+  toggleSubscript,
+  toggleSuperscript,
+  transformCase,
+} from "../../utils/editorCommands";
+import { exportHtmlFile } from "../../utils/exportHtml";
+import { exportPngFile } from "../../utils/exportPng";
+import { exportDocxFile } from "../../utils/exportDocx";
+import { exportPdfFile } from "../../utils/exportPdf";
 import {
   newDocument,
   openFileDialog,
@@ -17,10 +37,11 @@ import {
   saveActiveAs,
 } from "../../utils/fileActions";
 import { fileName } from "../../utils/filePath";
-import { showMessage } from "../../stores/dialogStore";
+import { parseDoc } from "../../utils/markdown";
 
 interface ToolbarProps {
   previewRef: React.RefObject<HTMLDivElement | null>;
+  isDark: boolean;
 }
 
 function ToolButton({
@@ -29,14 +50,12 @@ function ToolButton({
   onClick,
   active,
   disabled,
-  children,
 }: {
   icon?: IconName;
   label: string;
   onClick?: () => void;
   active?: boolean;
   disabled?: boolean;
-  children?: ReactNode;
 }) {
   return (
     <button
@@ -46,13 +65,10 @@ function ToolButton({
       disabled={disabled}
       onClick={onClick}
       className={`flex h-7 items-center gap-1.5 rounded-md px-2 text-[12px] transition-colors disabled:cursor-not-allowed disabled:opacity-40 ${
-        active
-          ? "bg-accent-soft text-accent"
-          : "text-muted hover:bg-hover hover:text-fg"
+        active ? "bg-accent-soft text-accent" : "text-muted hover:bg-hover hover:text-fg"
       }`}
     >
       {icon ? <Icon name={icon} size={15} /> : null}
-      {children}
     </button>
   );
 }
@@ -70,12 +86,13 @@ const THEME_META: Record<ThemeMode, { icon: IconName; label: string }> = {
   system: { icon: "monitor", label: "跟随系统" },
 };
 
-export function Toolbar({ previewRef }: ToolbarProps) {
+export function Toolbar({ previewRef, isDark }: ToolbarProps) {
   const doc = useAppStore((s) => s.docs.find((d) => d.id === s.activeId) ?? null);
   const viewMode = useAppStore((s) => s.viewMode);
   const outlineVisible = useAppStore((s) => s.outlineVisible);
   const syncScroll = useAppStore((s) => s.syncScroll);
-  const searchVisible = useAppStore((s) => s.searchVisible);
+  const searchVisible = useSearchStore((s) => s.visible);
+  const replaceVisible = useSearchStore((s) => s.replaceVisible);
   const theme = useSettingsStore((s) => s.theme);
   const setSetting = useSettingsStore((s) => s.set);
 
@@ -87,32 +104,161 @@ export function Toolbar({ previewRef }: ToolbarProps) {
     setSetting("theme", THEME_ORDER[(idx + 1) % THEME_ORDER.length]);
   };
 
-  const handleExport = async () => {
+  const baseName = doc?.filePath
+    ? fileName(doc.filePath).replace(/\.(md|markdown|mdown|mkd|mkdn|txt)$/i, "")
+    : "未命名";
+
+  /** 导出前确保处于预览模式并等待渲染完成 */
+  const ensurePreview = async (): Promise<HTMLElement | null> => {
+    if (!hasDoc) {
+      await showMessage("无法导出", "请先打开或新建一个文档。");
+      return null;
+    }
+    if (viewMode === "source") {
+      useAppStore.getState().setViewMode("preview");
+      await new Promise((resolve) => setTimeout(resolve, 260));
+    }
+    // 大文档需要手动刷新预览
     if (!previewRef.current) {
-      await showMessage(
-        "无法导出",
-        "导出 HTML 需要预览内容，请切换到预览或分屏模式后重试。",
-      );
+      await new Promise((resolve) => setTimeout(resolve, 200));
+    }
+    if (!previewRef.current) {
+      await showMessage("无法导出", "预览尚未就绪，请稍后重试。");
+      return null;
+    }
+    return previewRef.current;
+  };
+
+  const handleExport = async (kind: "html" | "png" | "docx" | "pdf") => {
+    const node = await ensurePreview();
+    if (!node) return;
+    if (kind === "html") {
+      await exportHtmlFile({ title: baseName, source: node, inlineImages: true });
       return;
     }
-    const name = doc?.filePath ? fileName(doc.filePath) : "未命名";
-    await exportHtmlFile({
-      title: name.replace(/\.(md|markdown|mdown|txt)$/i, ""),
-      source: previewRef.current,
-      inlineImages: true,
+    if (kind === "png") {
+      await exportPngFile({ source: node, title: baseName, isDark });
+      return;
+    }
+    if (kind === "docx") {
+      await exportDocxFile({
+        source: doc?.content ?? "",
+        tokens: parseDoc(doc?.content ?? ""),
+        docPath: doc?.filePath ?? null,
+        title: baseName,
+      });
+      return;
+    }
+    await exportPdfFile({
+      title: baseName,
+      beforePrint: async () => {
+        useSearchStore.getState().close();
+      },
     });
   };
 
+  const headingMenu: MenuGroup[] = [
+    {
+      title: "标题级别",
+      items: [1, 2, 3, 4, 5, 6].map((level) => ({
+        label: `H${level} 标题`,
+        hint: `${"#".repeat(level)} Ctrl+${level}`,
+        onClick: () => setHeading(level),
+      })),
+    },
+    {
+      items: [
+        { label: "普通段落", hint: "Ctrl+0", onClick: () => setHeading(0) },
+        { label: "提升一级", hint: "Ctrl+Alt+↑", onClick: () => shiftHeading(-1) },
+        { label: "降低一级", hint: "Ctrl+Alt+↓", onClick: () => shiftHeading(1) },
+      ],
+    },
+  ];
+
+  const listMenu: MenuGroup[] = [
+    {
+      title: "列表",
+      items: [
+        { icon: "list", label: "无序列表", hint: "Ctrl+Shift+8", onClick: () => toggleList("bullet") },
+        { icon: "list", label: "有序列表", hint: "Ctrl+Shift+7", onClick: () => toggleList("ordered") },
+        { icon: "check", label: "任务列表", hint: "Ctrl+Shift+9", onClick: () => toggleList("task") },
+        { icon: "chevron-right", label: "引用块", hint: "Ctrl+Shift+Q", onClick: () => toggleQuote() },
+      ],
+    },
+    {
+      title: "提示块",
+      items: [
+        { label: "提示 (NOTE)", onClick: () => insertCallout("note") },
+        { label: "技巧 (TIP)", onClick: () => insertCallout("tip") },
+        { label: "重要 (IMPORTANT)", onClick: () => insertCallout("important") },
+        { label: "警告 (WARNING)", onClick: () => insertCallout("warning") },
+        { label: "注意 (CAUTION)", onClick: () => insertCallout("caution") },
+      ],
+    },
+  ];
+
+  const insertMenu: MenuGroup[] = [
+    {
+      title: "插入",
+      items: [
+        { icon: "columns", label: "表格 3 × 3", hint: "Ctrl+Shift+T", onClick: () => insertTable(3, 3) },
+        { icon: "code", label: "代码块", hint: "Ctrl+Shift+C", onClick: () => insertCodeBlock() },
+        { icon: "minus", label: "分割线", hint: "Ctrl+Shift+H", onClick: () => insertHorizontalRule() },
+        { icon: "image", label: "图片", hint: "Ctrl+Shift+I", onClick: () => insertImage() },
+        { icon: "clock", label: "日期时间", onClick: () => insertDateTime() },
+        { icon: "list", label: "目录 (TOC)", onClick: () => insertToc() },
+      ],
+    },
+    {
+      title: "更多表格",
+      items: [
+        { label: "2 列 × 3 行", onClick: () => insertTable(2, 3) },
+        { label: "4 列 × 4 行", onClick: () => insertTable(4, 4) },
+        { label: "5 列 × 3 行", onClick: () => insertTable(5, 3) },
+      ],
+    },
+  ];
+
+  const formatMenu: MenuGroup[] = [
+    {
+      title: "文本格式",
+      items: [
+        { icon: "bold", label: "粗体", hint: "Ctrl+B", onClick: toggleBold },
+        { icon: "italic", label: "斜体", hint: "Ctrl+I", onClick: toggleItalic },
+        { icon: "minus", label: "删除线", hint: "Alt+Shift+5", onClick: toggleStrikethrough },
+        { icon: "code", label: "行内代码", hint: "Ctrl+`", onClick: toggleInlineCode },
+        { icon: "link", label: "链接", hint: "Ctrl+K", onClick: insertLink },
+        { label: "上标 x²", onClick: toggleSuperscript },
+        { label: "下标 x₂", onClick: toggleSubscript },
+      ],
+    },
+    {
+      title: "大小写",
+      items: [
+        { label: "转换为大写", onClick: () => transformCase("upper") },
+        { label: "转换为小写", onClick: () => transformCase("lower") },
+        { label: "首字母大写", onClick: () => transformCase("title") },
+      ],
+    },
+  ];
+
+  const exportMenu: MenuGroup[] = [
+    {
+      title: "导出",
+      items: [
+        { icon: "download", label: "HTML 单文件", hint: ".html", onClick: () => void handleExport("html") },
+        { icon: "image", label: "图片 (PNG)", hint: ".png", onClick: () => void handleExport("png") },
+        { icon: "file-text", label: "Word 文档", hint: ".docx", onClick: () => void handleExport("docx") },
+        { icon: "file-text", label: "PDF 文档", hint: ".pdf", onClick: () => void handleExport("pdf") },
+      ],
+    },
+  ];
+
   return (
-    <div className="flex h-11 shrink-0 items-center gap-1 border-b border-line bg-panel px-2">
+    <div className="print-hide flex h-11 shrink-0 items-center gap-1 border-b border-line bg-panel px-2">
       <ToolButton icon="file-plus" label="新建 (Ctrl+N)" onClick={() => void newDocument()} />
       <ToolButton icon="folder-open" label="打开 (Ctrl+O)" onClick={() => void openFileDialog()} />
-      <ToolButton
-        icon="save"
-        label="保存 (Ctrl+S)"
-        disabled={!hasDoc}
-        onClick={() => void saveActive()}
-      />
+      <ToolButton icon="save" label="保存 (Ctrl+S)" disabled={!hasDoc} onClick={() => void saveActive()} />
       <ToolButton
         icon="save-as"
         label="另存为 (Ctrl+Shift+S)"
@@ -137,33 +283,53 @@ export function Toolbar({ previewRef }: ToolbarProps) {
 
       <Divider />
 
-      <ToolButton
+      <DropdownMenu
+        icon="file-text"
+        label="标题"
+        title="标题级别"
+        groups={headingMenu}
+        disabled={!editable}
+      />
+      <DropdownMenu
+        icon="list"
+        label="列表"
+        title="列表与提示块"
+        groups={listMenu}
+        disabled={!editable}
+        width={230}
+      />
+      <DropdownMenu
+        icon="plus"
+        label="插入"
+        title="插入元素"
+        groups={insertMenu}
+        disabled={!editable}
+        width={230}
+      />
+      <DropdownMenu
         icon="bold"
-        label="粗体 (Ctrl+B)"
+        label="格式"
+        title="文本格式"
+        groups={formatMenu}
         disabled={!editable}
-        onClick={() => getEditor()?.wrapSelection("**", "**", "粗体")}
-      />
-      <ToolButton
-        icon="italic"
-        label="斜体 (Ctrl+I)"
-        disabled={!editable}
-        onClick={() => getEditor()?.wrapSelection("*", "*", "斜体")}
-      />
-      <ToolButton
-        icon="link"
-        label="插入链接 (Ctrl+K)"
-        disabled={!editable}
-        onClick={() => getEditor()?.wrapSelection("[", "](https://)", "链接文字")}
+        width={230}
       />
 
       <Divider />
 
       <ToolButton
         icon="search"
-        label="搜索 (Ctrl+F)"
+        label="查找 (Ctrl+F)"
         disabled={!hasDoc}
-        active={searchVisible}
-        onClick={() => useAppStore.getState().setSearchVisible(true)}
+        active={searchVisible && !replaceVisible}
+        onClick={() => useSearchStore.getState().open(false)}
+      />
+      <ToolButton
+        icon="refresh"
+        label="替换 (Ctrl+H)"
+        disabled={!hasDoc}
+        active={searchVisible && replaceVisible}
+        onClick={() => useSearchStore.getState().open(true)}
       />
       <ToolButton
         icon="list"
@@ -182,7 +348,15 @@ export function Toolbar({ previewRef }: ToolbarProps) {
 
       <div className="flex-1" />
 
-      <ToolButton icon="download" label="导出 HTML" disabled={!hasDoc} onClick={() => void handleExport()} />
+      <DropdownMenu
+        icon="download"
+        label="导出"
+        title="导出文档"
+        groups={exportMenu}
+        disabled={!hasDoc}
+        align="right"
+        width={200}
+      />
       <ToolButton
         icon={THEME_META[theme].icon}
         label={`${THEME_META[theme].label}（点击切换）`}

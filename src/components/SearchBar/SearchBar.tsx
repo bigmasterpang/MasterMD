@@ -1,26 +1,20 @@
 ﻿import { useEffect, useRef } from "react";
 import { Icon } from "../common/Icon";
+import { useSearchStore } from "../../stores/searchStore";
 import { useAppStore } from "../../stores/appStore";
-import { getEditor } from "../../utils/editorBridge";
 
-interface Props {
-  previewRef: React.RefObject<HTMLDivElement | null>;
-  /** 预览内容标识，内容变化后需要重新高亮 */
-  contentKey: string;
-}
-
-/**
- * 文件内搜索。
- * - 源码模式：使用 CodeMirror search 扩展
- * - 预览模式：在渲染后的 DOM 中包装 <mark> 并滚动到第一个结果
- */
-export function SearchBar({ previewRef, contentKey }: Props) {
-  const visible = useAppStore((s) => s.searchVisible);
-  const query = useAppStore((s) => s.searchQuery);
-  const caseSensitive = useAppStore((s) => s.searchCaseSensitive);
+/** Notepad++ 风格的查找 / 替换面板 */
+export function SearchBar() {
+  const visible = useSearchStore((s) => s.visible);
+  const replaceVisible = useSearchStore((s) => s.replaceVisible);
+  const query = useSearchStore((s) => s.query);
+  const replacement = useSearchStore((s) => s.replacement);
+  const options = useSearchStore((s) => s.options);
+  const matches = useSearchStore((s) => s.matches);
+  const current = useSearchStore((s) => s.current);
+  const error = useSearchStore((s) => s.error);
   const viewMode = useAppStore((s) => s.viewMode);
   const inputRef = useRef<HTMLInputElement>(null);
-  const hitRef = useRef<{ index: number; total: number }>({ index: 0, total: 0 });
 
   useEffect(() => {
     if (visible) {
@@ -29,187 +23,177 @@ export function SearchBar({ previewRef, contentKey }: Props) {
     }
   }, [visible]);
 
-  // 源码模式：同步查询串给 CodeMirror
+  // 面板刚打开时把焦点放在输入框；切换文档时重新计算
+  const activeId = useAppStore((s) => s.activeId);
   useEffect(() => {
-    if (!visible || viewMode === "preview") return;
-    getEditor()?.applySearch(query, caseSensitive);
-  }, [visible, query, caseSensitive, viewMode]);
-
-  // 预览模式：高亮匹配
-  useEffect(() => {
-    const root = previewRef.current;
-    if (!root) return;
-    clearMarks(root);
-    if (!visible || !query.trim() || viewMode === "source") {
-      hitRef.current = { index: 0, total: 0 };
-      return;
-    }
-    const total = highlightMatches(root, query, caseSensitive);
-    hitRef.current = { index: total > 0 ? 1 : 0, total };
-    if (total > 0) {
-      root.querySelector<HTMLElement>("mark.search-hit")?.scrollIntoView({
-        block: "center",
-      });
-    }
-  }, [visible, query, caseSensitive, contentKey, viewMode, previewRef]);
+    if (visible) useSearchStore.getState().recompute(true);
+  }, [activeId, visible]);
 
   if (!visible) return null;
 
-  const step = (delta: number) => {
-    if (viewMode === "source") {
-      if (delta > 0) getEditor()?.findNext();
-      else getEditor()?.findPrevious();
-      return;
-    }
-    const root = previewRef.current;
-    if (!root) return;
-    const marks = Array.from(root.querySelectorAll<HTMLElement>("mark.search-hit"));
-    if (marks.length === 0) return;
-    const current = marks.findIndex((m) => m.classList.contains("current"));
-    const next = (current + delta + marks.length) % marks.length;
-    marks.forEach((m) => m.classList.remove("current"));
-    marks[next].classList.add("current");
-    marks[next].scrollIntoView({ block: "center", behavior: "smooth" });
-    hitRef.current = { index: next + 1, total: marks.length };
-  };
+  const counter = error
+    ? "正则错误"
+    : matches.length > 0
+      ? `${current + 1}/${matches.length}`
+      : query
+        ? "无结果"
+        : "";
+
+  const step = (direction: -1 | 1) => useSearchStore.getState().step(direction);
 
   const close = () => {
-    useAppStore.getState().setSearchVisible(false);
-    getEditor()?.clearSearch();
-    const root = previewRef.current;
-    if (root) clearMarks(root);
+    useSearchStore.getState().close();
   };
 
-  const counter =
-    viewMode === "source"
-      ? ""
-      : hitRef.current.total > 0
-        ? `${hitRef.current.index}/${hitRef.current.total}`
-        : query.trim()
-          ? "无结果"
-          : "";
+  const toggleClass = (active: boolean) =>
+    `flex h-6 w-6 items-center justify-center rounded text-[11px] font-medium transition-colors ${
+      active
+        ? "bg-accent-soft text-accent"
+        : "text-muted hover:bg-hover hover:text-fg"
+    }`;
 
   return (
-    <div className="absolute right-4 top-3 z-30 flex items-center gap-1 rounded-[var(--radius)] border border-line bg-elevated px-2 py-1 shadow-[var(--shadow)]">
-      <Icon name="search" size={14} className="text-faint" />
-      <input
-        ref={inputRef}
-        value={query}
-        onChange={(event) => useAppStore.getState().setSearchQuery(event.target.value)}
-        onKeyDown={(event) => {
-          if (event.key === "Enter") {
-            event.preventDefault();
-            step(event.shiftKey ? -1 : 1);
-          } else if (event.key === "Escape") {
-            event.preventDefault();
-            close();
+    <div className="absolute right-6 top-3 z-30 w-[430px] rounded-[var(--radius)] border border-line bg-elevated p-2 shadow-[var(--shadow)]">
+      {/* 查找行 */}
+      <div className="flex items-center gap-1">
+        <button
+          type="button"
+          title={replaceVisible ? "隐藏替换" : "显示替换 (Ctrl+H)"}
+          onClick={() =>
+            useSearchStore.setState({ replaceVisible: !replaceVisible })
           }
-        }}
-        placeholder="查找…"
-        spellCheck={false}
-        className="h-6 w-48 bg-transparent text-[12px] text-fg outline-none placeholder:text-faint"
-      />
-      <span className="min-w-[42px] text-center text-[11px] text-faint">{counter}</span>
-      <button
-        type="button"
-        title="区分大小写"
-        onClick={() => useAppStore.getState().setSearchCaseSensitive(!caseSensitive)}
-        className={`rounded p-1 ${caseSensitive ? "bg-accent-soft text-accent" : "text-muted hover:bg-hover"}`}
-      >
-        <Icon name="case-sensitive" size={14} />
-      </button>
-      <button
-        type="button"
-        title="上一个 (Shift+Enter)"
-        onClick={() => step(-1)}
-        className="rounded p-1 text-muted hover:bg-hover"
-      >
-        <Icon name="arrow-up" size={14} />
-      </button>
-      <button
-        type="button"
-        title="下一个 (Enter)"
-        onClick={() => step(1)}
-        className="rounded p-1 text-muted hover:bg-hover"
-      >
-        <Icon name="arrow-down" size={14} />
-      </button>
-      <button
-        type="button"
-        title="关闭 (Esc)"
-        onClick={close}
-        className="rounded p-1 text-muted hover:bg-hover"
-      >
-        <Icon name="x" size={14} />
-      </button>
+          className={toggleClass(replaceVisible)}
+        >
+          <Icon name="chevron-down" size={13} className={replaceVisible ? "" : "-rotate-90"} />
+        </button>
+        <Icon name="search" size={14} className="shrink-0 text-faint" />
+        <input
+          ref={inputRef}
+          value={query}
+          onChange={(event) => useSearchStore.getState().setQuery(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === "Enter") {
+              event.preventDefault();
+              step(event.shiftKey ? -1 : 1);
+            } else if (event.key === "Escape") {
+              event.preventDefault();
+              close();
+            }
+          }}
+          placeholder="查找内容…"
+          spellCheck={false}
+          className="h-7 min-w-0 flex-1 rounded border border-line bg-input px-2 text-[12px] text-fg outline-none placeholder:text-faint focus:border-accent"
+        />
+        <span className="min-w-[52px] shrink-0 text-center text-[11px] text-faint">
+          {counter}
+        </span>
+        <button type="button" title="查找上一个 (Shift+Enter / Shift+F3)" onClick={() => step(-1)} className={toggleClass(false)}>
+          <Icon name="arrow-up" size={14} />
+        </button>
+        <button type="button" title="查找下一个 (Enter / F3)" onClick={() => step(1)} className={toggleClass(false)}>
+          <Icon name="arrow-down" size={14} />
+        </button>
+        <button type="button" title="关闭 (Esc)" onClick={close} className={toggleClass(false)}>
+          <Icon name="x" size={14} />
+        </button>
+      </div>
+
+      {/* 选项行 */}
+      <div className="mt-1.5 flex items-center gap-1 pl-6">
+        <button
+          type="button"
+          title="区分大小写"
+          onClick={() => useSearchStore.getState().toggleOption("caseSensitive")}
+          className={toggleClass(options.caseSensitive)}
+        >
+          Aa
+        </button>
+        <button
+          type="button"
+          title="全字匹配"
+          onClick={() => useSearchStore.getState().toggleOption("wholeWord")}
+          className={toggleClass(options.wholeWord)}
+        >
+          <span className="underline decoration-dotted">W</span>
+        </button>
+        <button
+          type="button"
+          title="正则表达式"
+          onClick={() => useSearchStore.getState().toggleOption("regex")}
+          className={toggleClass(options.regex)}
+        >
+          .*
+        </button>
+        <button
+          type="button"
+          title=". 匹配换行"
+          onClick={() => useSearchStore.getState().toggleOption("dotAll")}
+          className={toggleClass(options.dotAll)}
+        >
+          .\n
+        </button>
+        <button
+          type="button"
+          title="循环查找（到达末尾后回到开头）"
+          onClick={() => useSearchStore.getState().toggleOption("wrapAround")}
+          className={toggleClass(options.wrapAround)}
+        >
+          <Icon name="refresh" size={13} />
+        </button>
+        <div className="flex-1" />
+        <span className="text-[11px] text-faint">
+          {viewMode === "preview" ? "预览模式（替换作用于源码）" : "源码模式"}
+        </span>
+      </div>
+
+      {error ? (
+        <div className="mt-1.5 flex items-start gap-1 rounded bg-danger-soft px-2 py-1 text-[11px] text-danger">
+          <Icon name="alert-triangle" size={12} className="mt-0.5 shrink-0" />
+          <span className="break-all">{error}</span>
+        </div>
+      ) : null}
+
+      {/* 替换行 */}
+      {replaceVisible ? (
+        <div className="mt-1.5 flex items-center gap-1">
+          <span className="w-6 shrink-0" />
+          <Icon name="refresh" size={14} className="shrink-0 text-faint" />
+          <input
+            value={replacement}
+            onChange={(event) =>
+              useSearchStore.getState().setReplacement(event.target.value)
+            }
+            onKeyDown={(event) => {
+              if (event.key === "Enter") {
+                event.preventDefault();
+                useSearchStore.getState().replaceCurrent();
+              } else if (event.key === "Escape") {
+                event.preventDefault();
+                close();
+              }
+            }}
+            placeholder="替换为…"
+            spellCheck={false}
+            className="h-7 min-w-0 flex-1 rounded border border-line bg-input px-2 text-[12px] text-fg outline-none placeholder:text-faint focus:border-accent"
+          />
+          <button
+            type="button"
+            title="替换当前匹配"
+            onClick={() => useSearchStore.getState().replaceCurrent()}
+            className="h-7 shrink-0 rounded border border-line bg-elevated px-2.5 text-[11px] text-fg hover:bg-hover"
+          >
+            替换
+          </button>
+          <button
+            type="button"
+            title="替换全部匹配"
+            onClick={() => useSearchStore.getState().replaceAll()}
+            className="h-7 shrink-0 rounded border border-transparent bg-accent px-2.5 text-[11px] font-medium text-accent-fg hover:opacity-90"
+          >
+            全部替换
+          </button>
+        </div>
+      ) : null}
     </div>
   );
-}
-
-/** 清除预览中的搜索高亮 */
-function clearMarks(root: HTMLElement): void {
-  root.querySelectorAll("mark.search-hit").forEach((mark) => {
-    const parent = mark.parentNode;
-    if (!parent) return;
-    while (mark.firstChild) parent.insertBefore(mark.firstChild, mark);
-    parent.removeChild(mark);
-    parent.normalize();
-  });
-}
-
-/** 在预览 DOM 中高亮匹配文本，返回匹配数量 */
-function highlightMatches(
-  root: HTMLElement,
-  query: string,
-  caseSensitive: boolean,
-): number {
-  const needle = caseSensitive ? query : query.toLowerCase();
-  if (!needle) return 0;
-
-  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
-    acceptNode: (node) => {
-      const parent = node.parentElement;
-      if (!parent) return NodeFilter.FILTER_REJECT;
-      const tag = parent.tagName;
-      if (tag === "SCRIPT" || tag === "STYLE") return NodeFilter.FILTER_REJECT;
-      return node.nodeValue && node.nodeValue.trim()
-        ? NodeFilter.FILTER_ACCEPT
-        : NodeFilter.FILTER_REJECT;
-    },
-  });
-
-  const targets: Text[] = [];
-  let node = walker.nextNode();
-  while (node) {
-    targets.push(node as Text);
-    node = walker.nextNode();
-  }
-
-  let count = 0;
-  for (const textNode of targets) {
-    const text = textNode.nodeValue ?? "";
-    const haystack = caseSensitive ? text : text.toLowerCase();
-    let index = haystack.indexOf(needle);
-    if (index < 0) continue;
-
-    const fragment = document.createDocumentFragment();
-    let cursor = 0;
-    while (index >= 0) {
-      if (index > cursor) {
-        fragment.appendChild(document.createTextNode(text.slice(cursor, index)));
-      }
-      const mark = document.createElement("mark");
-      mark.className = count === 0 ? "search-hit current" : "search-hit";
-      mark.textContent = text.slice(index, index + needle.length);
-      fragment.appendChild(mark);
-      count += 1;
-      cursor = index + needle.length;
-      index = haystack.indexOf(needle, cursor);
-    }
-    if (cursor < text.length) {
-      fragment.appendChild(document.createTextNode(text.slice(cursor)));
-    }
-    textNode.parentNode?.replaceChild(fragment, textNode);
-  }
-  return count;
 }

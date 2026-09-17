@@ -7,6 +7,7 @@ export const SHORTCUT_IDS: ShortcutId[] = [
   "newDoc",
   "viewMode",
   "search",
+  "replace",
   "closeTab",
   "settings",
 ];
@@ -17,7 +18,8 @@ export const SHORTCUT_LABELS: Record<ShortcutId, string> = {
   saveAs: "另存为",
   newDoc: "新建文档",
   viewMode: "切换视图模式",
-  search: "文件内搜索",
+  search: "查找",
+  replace: "查找并替换",
   closeTab: "关闭当前标签",
   settings: "打开设置",
 };
@@ -29,6 +31,7 @@ export const DEFAULT_SHORTCUTS: ShortcutMap = {
   newDoc: "Ctrl+N",
   viewMode: "Ctrl+E",
   search: "Ctrl+F",
+  replace: "Ctrl+H",
   closeTab: "Ctrl+W",
   settings: "Ctrl+,",
 };

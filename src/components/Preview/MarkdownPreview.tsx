@@ -1,10 +1,12 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { loadKatex, loadMermaid } from "../../utils/markdown";
 import { isExternalUrl, resolveLocalImagePath, joinPath, dirName } from "../../utils/filePath";
 import { openExternal, openPath } from "../../utils/fileActions";
 import { sanitizeHtml } from "../../utils/sanitize";
 import { useAppStore } from "../../stores/appStore";
+import { useSearchStore } from "../../stores/searchStore";
+import { buildRegex, type SearchOptions } from "../../utils/searchEngine";
 
 interface Props {
   html: string;
@@ -29,6 +31,12 @@ export function MarkdownPreview({
 }: Props) {
   const bodyRef = useRef<HTMLDivElement>(null);
   const generationRef = useRef(0);
+  const [markCount, setMarkCount] = useState(0);
+
+  const searchVisible = useSearchStore((s) => s.visible);
+  const searchQuery = useSearchStore((s) => s.query);
+  const searchOptions = useSearchStore((s) => s.options);
+  const searchCurrent = useSearchStore((s) => s.current);
 
   useEffect(() => {
     const root = bodyRef.current;
@@ -146,17 +154,107 @@ export function MarkdownPreview({
     }
   }, [html, hasMath, hasMermaid, isDark]);
 
+  /* ---------------- 搜索高亮（作用于渲染后的文本） ---------------- */
+  useEffect(() => {
+    const root = bodyRef.current;
+    if (!root) return;
+    clearSearchMarks(root);
+    if (!searchVisible || !searchQuery.trim()) {
+      setMarkCount(0);
+      return;
+    }
+    setMarkCount(highlightText(root, searchQuery, searchOptions));
+  }, [html, searchVisible, searchQuery, searchOptions]);
+
+  useEffect(() => {
+    const root = bodyRef.current;
+    if (!root || markCount === 0) return;
+    const marks = root.querySelectorAll<HTMLElement>("mark.search-hit");
+    if (marks.length === 0) return;
+    const index = Math.min(Math.max(0, searchCurrent), marks.length - 1);
+    marks.forEach((mark, i) => mark.classList.toggle("current", i === index));
+    marks[index]?.scrollIntoView({ block: "center", behavior: "smooth" });
+  }, [searchCurrent, markCount]);
+
   return (
     <div
       ref={scrollRef}
-      className="h-full overflow-auto"
+      className="print-plain h-full overflow-auto"
       style={{ scrollBehavior: "auto" }}
     >
-      <div className="mx-auto w-full px-8 py-6" style={{ maxWidth: 900 }}>
+      <div className="print-content mx-auto w-full px-8 py-6" style={{ maxWidth: 900 }}>
         <div ref={bodyRef} className="md-body" />
       </div>
     </div>
   );
+}
+
+/** 清除预览中的搜索高亮 */
+function clearSearchMarks(root: HTMLElement): void {
+  root.querySelectorAll("mark.search-hit").forEach((mark) => {
+    const parent = mark.parentNode;
+    if (!parent) return;
+    while (mark.firstChild) parent.insertBefore(mark.firstChild, mark);
+    parent.removeChild(mark);
+    parent.normalize();
+  });
+}
+
+/** 在渲染后的文本节点中高亮匹配，返回匹配数量（用于预览模式的定位） */
+function highlightText(root: HTMLElement, query: string, options: SearchOptions): number {
+  const { regex } = buildRegex(query, options);
+  if (!regex) return 0;
+
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
+    acceptNode: (node) => {
+      const parent = node.parentElement;
+      if (!parent) return NodeFilter.FILTER_REJECT;
+      const tag = parent.tagName;
+      if (tag === "SCRIPT" || tag === "STYLE") return NodeFilter.FILTER_REJECT;
+      return node.nodeValue && node.nodeValue.trim()
+        ? NodeFilter.FILTER_ACCEPT
+        : NodeFilter.FILTER_REJECT;
+    },
+  });
+  const targets: Text[] = [];
+  let node = walker.nextNode();
+  while (node) {
+    targets.push(node as Text);
+    node = walker.nextNode();
+  }
+
+  let count = 0;
+  for (const textNode of targets) {
+    const text = textNode.nodeValue ?? "";
+    regex.lastIndex = 0;
+    let match: RegExpExecArray | null;
+    let matched = false;
+    let cursor = 0;
+    const fragment = document.createDocumentFragment();
+    while ((match = regex.exec(text)) !== null) {
+      if (match[0].length === 0) {
+        regex.lastIndex += 1;
+        continue;
+      }
+      matched = true;
+      if (match.index > cursor) {
+        fragment.appendChild(document.createTextNode(text.slice(cursor, match.index)));
+      }
+      const mark = document.createElement("mark");
+      mark.className = count === 0 ? "search-hit current" : "search-hit";
+      mark.textContent = match[0];
+      fragment.appendChild(mark);
+      count += 1;
+      cursor = match.index + match[0].length;
+      if (regex.lastIndex <= match.index) regex.lastIndex = match.index + 1;
+    }
+    if (!matched) continue;
+    if (cursor < text.length) {
+      fragment.appendChild(document.createTextNode(text.slice(cursor)));
+    }
+    textNode.parentNode?.replaceChild(fragment, textNode);
+  }
+  return count;
 }
 
 function markBroken(img: HTMLImageElement, reason: string) {

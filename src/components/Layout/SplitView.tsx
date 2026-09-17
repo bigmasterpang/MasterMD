@@ -67,7 +67,7 @@ export function SplitView({
     <div ref={containerRef} className="flex h-full min-h-0">
       <div
         ref={editorRef}
-        className="min-w-0 overflow-hidden"
+        className="print-hide min-w-0 overflow-hidden"
         style={{ width: `${ratio * 100}%` }}
       >
         <CodeMirrorEditor key={docId} docId={docId} isDark={isDark} />
@@ -82,13 +82,13 @@ export function SplitView({
           document.body.style.userSelect = "none";
         }}
         onDoubleClick={() => setRatio(0.5)}
-        className="group relative w-px shrink-0 cursor-col-resize bg-line"
+        className="print-hide group relative w-px shrink-0 cursor-col-resize bg-line"
         title="拖动调整宽度，双击恢复 1:1"
       >
         <div className="absolute inset-y-0 -left-1 -right-1 z-10 group-hover:bg-accent-soft" />
       </div>
 
-      <div className="relative min-w-0 flex-1">
+      <div className="print-plain relative min-w-0 flex-1">
         {livePreview ? (
           <MarkdownPreview
             html={html}

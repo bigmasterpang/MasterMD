@@ -1,8 +1,9 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Modal, Button } from "../common/Modal";
 import { Icon } from "../common/Icon";
 import { useDialogStore } from "../../stores/dialogStore";
 import { useSettingsStore } from "../../stores/settingsStore";
+import { useUpdateStore } from "../../stores/updateStore";
 import type { AccentName, ShortcutId, ThemeMode } from "../../types";
 import {
   SHORTCUT_IDS,
@@ -11,6 +12,7 @@ import {
   findConflict,
 } from "../../utils/shortcuts";
 import { MAX_FONT_SIZE, MIN_FONT_SIZE, MIN_AUTOSAVE_INTERVAL } from "../../utils/constants";
+import { getVersion } from "@tauri-apps/api/app";
 
 const THEMES: Array<{ value: ThemeMode; label: string }> = [
   { value: "light", label: "浅色" },
@@ -38,8 +40,16 @@ export function SettingsModal() {
   const open = useDialogStore((s) => s.settingsVisible);
   const close = () => useDialogStore.getState().setSettingsVisible(false);
   const settings = useSettingsStore();
+  const updateState = useUpdateStore();
   const [capturing, setCapturing] = useState<ShortcutId | null>(null);
   const [conflict, setConflict] = useState<string | null>(null);
+  const [version, setVersion] = useState("");
+
+  useEffect(() => {
+    void getVersion()
+      .then(setVersion)
+      .catch(() => setVersion("0.1.0"));
+  }, []);
 
   const update = (patch: Parameters<typeof settings.update>[0]) => {
     settings.update(patch);
@@ -232,6 +242,34 @@ export function SettingsModal() {
                 </button>
               </div>
             ))}
+          </div>
+        </Section>
+
+        <Section title="版本更新">
+          <Row label="启动时自动检查更新">
+            <Toggle
+              checked={settings.autoCheckUpdate}
+              onChange={(value) => update({ autoCheckUpdate: value })}
+            />
+          </Row>
+          <Row label={`当前版本 ${version}`}>
+            <button
+              type="button"
+              onClick={() => void useUpdateStore.getState().check()}
+              className="flex items-center gap-1.5 rounded-md border border-line bg-input px-2.5 py-1 text-[12px] text-fg hover:bg-hover disabled:opacity-50"
+              disabled={updateState.checking}
+            >
+              <Icon name={updateState.checking ? "loader" : "refresh"} size={13} />
+              {updateState.checking ? "检查中…" : "检查更新"}
+            </button>
+          </Row>
+          <div className="text-[11px] text-faint">
+            版本来源：github.com/bigmasterpang/MasterMD
+            {updateState.info?.hasUpdate
+              ? ` · 发现新版本 ${updateState.info.latest}`
+              : updateState.info
+                ? " · 已是最新版本"
+                : ""}
           </div>
         </Section>
       </div>

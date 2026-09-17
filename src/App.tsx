@@ -28,7 +28,11 @@ import {
 import { useFileWatcher } from "./hooks/useFileWatcher";
 import { useAutoSave } from "./hooks/useAutoSave";
 import { useAppStore } from "./stores/appStore";
+import { useSearchStore } from "./stores/searchStore";
+import { useUpdateStore } from "./stores/updateStore";
 import { askUnsaved } from "./stores/dialogStore";
+import { UpdateDialog } from "./components/Dialogs/UpdateDialog";
+import { useSettingsStore } from "./stores/settingsStore";
 import {
   displayName,
   loadRecentFiles,
@@ -71,6 +75,12 @@ export default function App() {
     useAppStore.getState().setHeadings(headings);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [headings, doc?.id]);
+
+  /* ------------------ 搜索匹配随内容变化重算 ------------------ */
+  useEffect(() => {
+    if (!useSearchStore.getState().visible) return;
+    useSearchStore.getState().recompute(false);
+  }, [content, doc?.id]);
 
   const frontMatter = rendered.frontMatter;
   const frontMatterRaw = rendered.frontMatterRaw;
@@ -131,6 +141,13 @@ export default function App() {
       } catch (error) {
         console.error("注册关闭监听失败", error);
       }
+
+      // 启动后自动检查更新（可在设置中关闭）
+      if (useSettingsStore.getState().autoCheckUpdate) {
+        window.setTimeout(() => {
+          void useUpdateStore.getState().check({ silent: true });
+        }, 2500);
+      }
     })();
 
     return () => {
@@ -152,8 +169,7 @@ export default function App() {
   };
 
   const previewNode = (
-    <MarkdownPreview
-      html={effective.html}
+    <MarkdownPreview      html={effective.html}
       hasMath={effective.hasMath}
       hasMermaid={effective.hasMermaid}
       isDark={isDark}
@@ -163,7 +179,7 @@ export default function App() {
 
   return (
     <div className="relative flex h-full flex-col bg-app text-fg">
-      <Toolbar previewRef={previewRef} />
+      <Toolbar previewRef={previewRef} isDark={isDark} />
       <TabBar />
 
       <div className="flex min-h-0 flex-1">
@@ -203,9 +219,7 @@ export default function App() {
             />
           )}
 
-          {doc ? (
-            <SearchBar previewRef={previewRef} contentKey={effective.html} />
-          ) : null}
+          {doc ? <SearchBar /> : null}
         </div>
       </div>
 
@@ -224,12 +238,12 @@ export default function App() {
       <ConflictDialog />
       <ConfirmDialog />
       <MessageDialog />
+      <UpdateDialog />
     </div>
   );
 }
 
-/** 关闭窗口前的确认流程：整理未保存文档后再销毁窗口 */
-async function handleCloseRequest(): Promise<void> {
+/** 关闭窗口前的确认流程：整理未保存文档后再销毁窗口 */async function handleCloseRequest(): Promise<void> {
   const docs = [...useAppStore.getState().docs];
   for (const doc of docs) {
     if (!doc.isDirty) continue;

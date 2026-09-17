@@ -173,6 +173,64 @@ fn base64_encode(input: &[u8]) -> String {
     out
 }
 
+/// 解码标准 base64（接受换行/空白，忽略非法字符）。
+fn base64_decode(input: &str) -> Result<Vec<u8>, String> {
+    let cleaned: Vec<u8> = input
+        .bytes()
+        .filter(|b| !b.is_ascii_whitespace())
+        .collect();
+    if cleaned.len() % 4 != 0 {
+        return Err("base64 长度非法".to_string());
+    }
+    let value_of = |b: u8| -> Option<u32> {
+        match b {
+            b'A'..=b'Z' => Some((b - b'A') as u32),
+            b'a'..=b'z' => Some((b - b'a') as u32 + 26),
+            b'0'..=b'9' => Some((b - b'0') as u32 + 52),
+            b'+' => Some(62),
+            b'/' => Some(63),
+            _ => None,
+        }
+    };
+    let mut out = Vec::with_capacity(cleaned.len() / 4 * 3);
+    for chunk in cleaned.chunks(4) {
+        let mut n: u32 = 0;
+        let mut pad = 0;
+        for (i, &b) in chunk.iter().enumerate() {
+            if b == b'=' {
+                pad += 1;
+                n <<= 6;
+                continue;
+            }
+            let v = value_of(b).ok_or_else(|| "base64 含非法字符".to_string())?;
+            n = (n << 6) | v;
+            let _ = i;
+        }
+        out.push((n >> 16) as u8);
+        if pad < 2 {
+            out.push((n >> 8) as u8);
+        }
+        if pad < 1 {
+            out.push(n as u8);
+        }
+    }
+    Ok(out)
+}
+
+/// 写入二进制文件（导出 PNG / DOCX 使用），内容以 base64 传输。
+#[tauri::command]
+pub async fn write_binary_file(path: String, base64: String) -> Result<u64, String> {
+    let p = validate_path(&path)?;
+    if let Some(parent) = p.parent() {
+        if !parent.as_os_str().is_empty() && !parent.exists() {
+            std::fs::create_dir_all(parent).map_err(|e| format!("创建目录失败: {e}"))?;
+        }
+    }
+    let bytes = base64_decode(&base64)?;
+    std::fs::write(&p, &bytes).map_err(|e| format!("写入文件失败: {e}"))?;
+    Ok(bytes.len() as u64)
+}
+
 /// 供其它模块复用的路径父目录提取。
 pub fn parent_dir(path: &str) -> Result<PathBuf, String> {
     let p = validate_path(path)?;

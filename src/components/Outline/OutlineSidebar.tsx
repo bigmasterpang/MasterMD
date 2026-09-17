@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Icon } from "../common/Icon";
 import { useAppStore } from "../../stores/appStore";
-import { getEditor } from "../../utils/editorBridge";
+import { scrollToLine } from "../../utils/editorCommands";
 import type { HeadingItem } from "../../types";
 
 interface Props {
@@ -101,7 +101,7 @@ export function OutlineSidebar({ previewRef }: Props) {
 
   const jumpTo = (heading: FlatHeading) => {
     if (viewMode === "source") {
-      getEditor()?.scrollToLine(heading.line);
+      scrollToLine(heading.line);
       return;
     }
     const preview = previewRef.current;
@@ -115,7 +115,7 @@ export function OutlineSidebar({ previewRef }: Props) {
   };
 
   return (
-    <aside className="flex w-[260px] shrink-0 flex-col border-r border-line bg-sidebar">
+    <aside className="print-hide flex w-[260px] shrink-0 flex-col border-r border-line bg-sidebar">
       <div className="flex h-8 shrink-0 items-center justify-between border-b border-line px-3 text-[11px] font-medium uppercase tracking-wide text-faint">
         大纲
         <button

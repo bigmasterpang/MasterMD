@@ -437,6 +437,94 @@ textarea {
   color: var(--accent-fg);
 }
 
+/* 提示块（GitHub Alerts 风格） */
+.md-body .callout {
+  margin: 1.1em 0;
+  border: 1px solid var(--border);
+  border-left: 4px solid var(--callout-accent, var(--accent));
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--callout-accent, var(--accent)) 6%, var(--bg-panel));
+  overflow: hidden;
+}
+.md-body .callout-title {
+  display: flex;
+  align-items: center;
+  gap: 0.5em;
+  padding: 0.5em 0.9em 0.35em;
+  font-weight: 600;
+  font-size: 0.93em;
+  color: var(--callout-fg, var(--text));
+}
+.md-body .callout-icon {
+  font-size: 0.95em;
+  line-height: 1;
+}
+.md-body .callout-body {
+  padding: 0 0.9em;
+}
+.md-body .callout-body > *:first-child {
+  margin-top: 0.35em;
+}
+.md-body .callout-body > *:last-child {
+  margin-bottom: 0.6em;
+}
+.md-body .callout-note,
+.md-body .callout-info {
+  --callout-accent: #2563eb;
+  --callout-fg: #1d4ed8;
+}
+.md-body .callout-tip,
+.md-body .callout-success {
+  --callout-accent: #16a34a;
+  --callout-fg: #15803d;
+}
+.md-body .callout-important,
+.md-body .callout-question {
+  --callout-accent: #7c3aed;
+  --callout-fg: #6d28d9;
+}
+.md-body .callout-warning {
+  --callout-accent: #d97706;
+  --callout-fg: #b45309;
+}
+.md-body .callout-caution,
+.md-body .callout-danger {
+  --callout-accent: #dc2626;
+  --callout-fg: #b91c1c;
+}
+.md-body .callout-quote {
+  --callout-accent: #6b7280;
+  --callout-fg: #4b5563;
+}
+html.dark .md-body .callout-note,
+html.dark .md-body .callout-info {
+  --callout-fg: #79c0ff;
+}
+html.dark .md-body .callout-tip,
+html.dark .md-body .callout-success {
+  --callout-fg: #56d364;
+}
+html.dark .md-body .callout-important,
+html.dark .md-body .callout-question {
+  --callout-fg: #d2a8ff;
+}
+html.dark .md-body .callout-warning {
+  --callout-fg: #e3b341;
+}
+html.dark .md-body .callout-caution,
+html.dark .md-body .callout-danger {
+  --callout-fg: #ff7b72;
+}
+html.dark .md-body .callout-quote {
+  --callout-fg: #a3a8b0;
+}
+
+.md-body sup,
+.md-body sub {
+  font-size: 0.75em;
+  line-height: 0;
+}
+
 /* front matter 元数据卡片 */
 .front-matter {
   margin-bottom: 1.5em;
@@ -583,8 +671,91 @@ html.dark .hljs-meta {
 }
 
 /* ------------------------------------------------------------------ */
-/* CodeMirror 6                                                        */
+/* 搜索匹配高亮（编辑器内自绘装饰）                                     */
 /* ------------------------------------------------------------------ */
+.cm-search-hit {
+  background: var(--mark-bg);
+  border-radius: 2px;
+}
+.cm-search-hit-current {
+  background: var(--accent);
+  color: var(--accent-fg);
+  border-radius: 2px;
+}
+
+/* ------------------------------------------------------------------ */
+/* 打印 / 导出 PDF：统一为浅色主题并只保留正文                          */
+/* ------------------------------------------------------------------ */
+@media print {
+  @page {
+    margin: 16mm 14mm;
+  }
+
+  :root,
+  html.dark {
+    --bg: #ffffff;
+    --bg-panel: #f6f7f9;
+    --bg-sidebar: #ffffff;
+    --bg-elevated: #ffffff;
+    --bg-hover: #ffffff;
+    --bg-active: #ffffff;
+    --border: #d8dbe0;
+    --border-strong: #c4c8cf;
+    --text: #1f2328;
+    --text-muted: #4b5563;
+    --text-faint: #6b7280;
+    --code-bg: #f6f8fa;
+    --code-border: #d8dbe0;
+    --mark-bg: transparent;
+  }
+
+  html,
+  body,
+  #root {
+    height: auto !important;
+    overflow: visible !important;
+    background: #ffffff !important;
+  }
+
+  .print-hide {
+    display: none !important;
+  }
+
+  .print-plain {
+    display: block !important;
+    position: static !important;
+    height: auto !important;
+    max-height: none !important;
+    min-height: 0 !important;
+    overflow: visible !important;
+  }
+
+  .print-content {
+    padding: 0 !important;
+    max-width: none !important;
+  }
+
+  .md-body {
+    user-select: none;
+  }
+
+  .md-body pre,
+  .md-body table,
+  .md-body .callout,
+  .md-body img {
+    break-inside: avoid;
+  }
+
+  .md-body h1,
+  .md-body h2,
+  .md-body h3,
+  .md-body h4,
+  .md-body h5,
+  .md-body h6 {
+    break-after: avoid;
+  }
+}
+
 .cm-editor {
   height: 100%;
   font-family: var(--font-mono);

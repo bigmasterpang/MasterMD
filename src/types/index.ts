@@ -62,6 +62,7 @@ export type ShortcutId =
   | "newDoc"
   | "viewMode"
   | "search"
+  | "replace"
   | "closeTab"
   | "settings";
 
@@ -80,6 +81,7 @@ export interface Settings {
   autoSaveInterval: number;
   recentFilesLimit: number;
   shortcuts: ShortcutMap;
+  autoCheckUpdate: boolean;
 }
 
 /** 未保存变更弹窗结果 */
