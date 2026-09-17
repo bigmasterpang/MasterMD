@@ -244,6 +244,9 @@ function taskListPlugin(md: MarkdownItType): void {
       if (!m) continue;
 
       const checked = m[1].toLowerCase() === "x";
+      // 记录源码行号，供预览区点击复选框时回写文档
+      const lineOffset = Number((state.env as { lineOffset?: number }).lineOffset ?? 0);
+      const sourceLine = (li.map?.[0] ?? 0) + lineOffset;
       open.attrJoin("class", "task-item");
       token.content = token.content.replace(/^\[([ xX])\][ \t]+/, "");
       const first = token.children?.[0];
@@ -251,7 +254,7 @@ function taskListPlugin(md: MarkdownItType): void {
         first.content = first.content.replace(/^\[([ xX])\][ \t]+/, "");
       }
       const box = new state.Token("html_inline", "", 0);
-      box.content = `<input type="checkbox" disabled${checked ? " checked" : ""}> `;
+      box.content = `<input type="checkbox" class="task-box" data-line="${sourceLine}"${checked ? " checked" : ""}> `;
       token.children?.unshift(box);
     }
     return true;

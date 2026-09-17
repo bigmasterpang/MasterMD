@@ -1,17 +1,20 @@
 import { Icon, type IconName } from "../common/Icon";
 import { DropdownMenu, type MenuGroup } from "../common/DropdownMenu";
 import { useAppStore } from "../../stores/appStore";
-import { useDialogStore, showMessage } from "../../stores/dialogStore";
+import { useDialogStore, showMessage, askForm } from "../../stores/dialogStore";
 import { useSettingsStore } from "../../stores/settingsStore";
 import { useSearchStore } from "../../stores/searchStore";
 import type { ThemeMode, ViewMode } from "../../types";
+import { getEditorView } from "../../utils/editorBridge";
 import {
   insertCallout,
   insertCodeBlock,
   insertDateTime,
   insertHorizontalRule,
-  insertImage,
-  insertLink,
+  insertMarkdownImage,
+  insertMarkdownLink,
+  insertMath,
+  insertMermaid,
   insertTable,
   insertToc,
   setHeading,
@@ -65,7 +68,7 @@ function ToolButton({
       disabled={disabled}
       onClick={onClick}
       className={`flex h-7 items-center gap-1.5 rounded-md px-2 text-[12px] transition-colors disabled:cursor-not-allowed disabled:opacity-40 ${
-        active ? "bg-accent-soft text-accent" : "text-muted hover:bg-hover hover:text-fg"
+        active ? "bg-accent-soft-strong font-medium text-accent" : "text-muted hover:bg-hover hover:text-fg"
       }`}
     >
       {icon ? <Icon name={icon} size={15} /> : null}
@@ -201,12 +204,36 @@ export function Toolbar({ previewRef, isDark }: ToolbarProps) {
     {
       title: "插入",
       items: [
+        {
+          icon: "image",
+          label: "链接",
+          hint: "Ctrl+K",
+          onClick: () => void promptInsert("link"),
+        },
+        {
+          icon: "image",
+          label: "图片",
+          hint: "Ctrl+Shift+I",
+          onClick: () => void promptInsert("image"),
+        },
         { icon: "columns", label: "表格 3 × 3", hint: "Ctrl+Shift+T", onClick: () => insertTable(3, 3) },
         { icon: "code", label: "代码块", hint: "Ctrl+Shift+C", onClick: () => insertCodeBlock() },
         { icon: "minus", label: "分割线", hint: "Ctrl+Shift+H", onClick: () => insertHorizontalRule() },
-        { icon: "image", label: "图片", hint: "Ctrl+Shift+I", onClick: () => insertImage() },
         { icon: "clock", label: "日期时间", onClick: () => insertDateTime() },
-        { icon: "list", label: "目录 (TOC)", onClick: () => insertToc() },
+        { icon: "list", label: "目录 (TOC)", hint: "Ctrl+Shift+O", onClick: () => insertToc() },
+      ],
+    },
+    {
+      title: "数学公式",
+      items: [
+        { label: "行内公式  $E = mc^2$", onClick: () => insertMath(false) },
+        { label: "块级公式  $$ … $$", onClick: () => insertMath(true) },
+      ],
+    },
+    {
+      title: "图表",
+      items: [
+        { label: "Mermaid 流程图", icon: "columns", onClick: () => insertMermaid() },
       ],
     },
     {
@@ -227,7 +254,7 @@ export function Toolbar({ previewRef, isDark }: ToolbarProps) {
         { icon: "italic", label: "斜体", hint: "Ctrl+I", onClick: toggleItalic },
         { icon: "minus", label: "删除线", hint: "Alt+Shift+5", onClick: toggleStrikethrough },
         { icon: "code", label: "行内代码", hint: "Ctrl+`", onClick: toggleInlineCode },
-        { icon: "link", label: "链接", hint: "Ctrl+K", onClick: insertLink },
+        { icon: "link", label: "链接", hint: "Ctrl+K", onClick: () => void promptInsert("link") },
         { label: "上标 x²", onClick: toggleSuperscript },
         { label: "下标 x₂", onClick: toggleSubscript },
       ],
@@ -373,4 +400,60 @@ export function Toolbar({ previewRef, isDark }: ToolbarProps) {
 
 function Divider() {
   return <div className="mx-1 h-5 w-px bg-line" />;
+}
+
+/** 链接 / 图片插入：先弹出表单填写文字与地址，再写入编辑器 */
+export async function promptInsert(kind: "link" | "image"): Promise<void> {
+  const selected = getSelectedText();
+  const values = await askForm({
+    title: kind === "link" ? "插入链接" : "插入图片",
+    confirmText: "插入",
+    fields:
+      kind === "link"
+        ? [
+            { key: "text", label: "显示文字", value: selected, placeholder: "链接文字" },
+            {
+              key: "url",
+              label: "链接地址",
+              value: selected && /^https?:|^mailto:/i.test(selected) ? selected : "https://",
+              placeholder: "https://example.com",
+            },
+          ]
+        : [
+            { key: "alt", label: "图片说明", value: selected, placeholder: "图片描述" },
+            {
+              key: "src",
+              label: "图片路径或链接",
+              placeholder: "assets/image.png 或 https://…",
+            },
+          ],
+  });
+  if (!values) return;
+  if (kind === "link") {
+    if (!values.url?.trim()) {
+      await showMessage("无法插入链接", "请填写链接地址。");
+      return;
+    }
+    insertMarkdownLink(values.text ?? "", values.url);
+  } else {
+    if (!values.src?.trim()) {
+      await showMessage("无法插入图片", "请填写图片路径或链接。");
+      return;
+    }
+    insertMarkdownImage(values.alt ?? "", values.src);
+  }
+}
+
+/** 取编辑器或页面选区中的纯文本，用于表单预填 */
+function getSelectedText(): string {
+  const view = getEditorView();
+  if (view) {
+    const sel = view.state.selection.main;
+    if (!sel.empty) {
+      const text = view.state.sliceDoc(sel.from, sel.to);
+      if (text.length <= 200 && !text.includes("\n")) return text;
+    }
+  }
+  const page = window.getSelection()?.toString() ?? "";
+  return page.length <= 200 && !page.includes("\n") ? page : "";
 }

@@ -1,7 +1,8 @@
 import type { ChangeSpec, EditorState, Line } from "@codemirror/state";
 import { EditorSelection } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
-import { withEditorView } from "./editorBridge";
+import { getEditorView, withEditorView } from "./editorBridge";
+import { useAppStore } from "../stores/appStore";
 import { parseHeadings } from "./markdown";
 
 /**
@@ -499,6 +500,116 @@ export function scrollToLine(line: number): void {
     });
     view.focus();
   });
+}
+
+/** 插入数学公式：选中内容作为公式体，未选中则插入模板 */
+export function insertMath(display: boolean): void {
+  withEditorView((view) => {
+    const { state } = view;
+    const range = state.selection.main;
+    const selected = state.sliceDoc(range.from, range.to).trim();
+    if (display) {
+      const body = selected || "\\int_{0}^{\\infty} e^{-x^2}\\,dx = \\frac{\\sqrt{\\pi}}{2}";
+      const block = `$$\n${body}\n$$`;
+      view.dispatch({
+        changes: { from: range.from, to: range.to, insert: block },
+        selection: {
+          anchor: range.from + 3,
+          head: range.from + 3 + body.length,
+        },
+        scrollIntoView: true,
+      });
+    } else {
+      const body = selected || "E = mc^2";
+      const inline = `$${body}$`;
+      view.dispatch({
+        changes: { from: range.from, to: range.to, insert: inline },
+        selection: {
+          anchor: range.from + 1,
+          head: range.from + 1 + body.length,
+        },
+        scrollIntoView: true,
+      });
+    }
+    view.focus();
+  });
+}
+
+/** 插入 Mermaid 图表模板 */
+export function insertMermaid(): void {
+  const template = [
+    "```mermaid",
+    "graph TD",
+    "    A[开始] --> B{条件判断}",
+    "    B -->|是| C[处理]",
+    "    B -->|否| D[结束]",
+    "    C --> D",
+    "```",
+  ].join("\n");
+  withEditorView((view) => {
+    const { state } = view;
+    const range = state.selection.main;
+    const lineStart = state.doc.lineAt(range.from).from;
+    const before = state.sliceDoc(Math.max(0, lineStart - 2), lineStart);
+    const prefix = lineStart === 0 || before.endsWith("\n\n") ? "" : "\n";
+    const insert = `${prefix}${template}\n`;
+    view.dispatch({
+      changes: { from: range.from, to: range.to, insert },
+      selection: { anchor: range.from + insert.length },
+      scrollIntoView: true,
+    });
+    view.focus();
+  });
+}
+
+/** 插入 Markdown 链接（由链接对话框调用） */
+export function insertMarkdownLink(text: string, url: string): void {
+  const label = text.trim() || url.trim();
+  const href = url.trim() || "https://";
+  insertInlineSnippet(`[${label}](${href})`);
+}
+
+/** 插入 Markdown 图片（由链接对话框调用） */
+export function insertMarkdownImage(alt: string, src: string): void {
+  const label = alt.trim() || "图片";
+  const path = src.trim() || "assets/image.png";
+  insertInlineSnippet(`![${label}](${path})`);
+}
+
+/** 用片段替换当前选区（无选区则插入到光标处） */
+function insertInlineSnippet(snippet: string): void {
+  withEditorView((view) => {
+    const range = view.state.selection.main;
+    view.dispatch({
+      changes: { from: range.from, to: range.to, insert: snippet },
+      selection: { anchor: range.from + snippet.length },
+      scrollIntoView: true,
+    });
+    view.focus();
+  });
+}
+
+/** 切换预览中某一行的任务勾选状态（预览区复选框交互） */
+export function toggleTaskOnLine(lineIndex: number): void {
+  const state = useAppStore.getState();
+  const doc = state.docs.find((d) => d.id === state.activeId);
+  if (!doc) return;
+  const lines = doc.content.split("\n");
+  if (lineIndex < 0 || lineIndex >= lines.length) return;
+  const text = lines[lineIndex];
+  const match = /^(\s*[-*+]\s+\[)([ xX])(\])/.exec(text);
+  if (!match) return;
+  const next = `${match[1]}${match[2] === " " ? "x" : " "}${match[3]}${text.slice(match[0].length)}`;
+
+  const view = getEditorView();
+  if (view && state.viewMode !== "preview") {
+    // 源码编辑时走 CodeMirror 事务，保留撤销历史
+    const line = view.state.doc.line(lineIndex + 1);
+    view.dispatch({ changes: { from: line.from, to: line.to, insert: next } });
+    return;
+  }
+  lines[lineIndex] = next;
+  useAppStore.getState().setContent(lines.join("\n"));
 }
 
 /** 选中并滚动到指定偏移区间 */

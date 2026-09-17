@@ -3,6 +3,7 @@ import { convertFileSrc } from "@tauri-apps/api/core";
 import { loadKatex, loadMermaid } from "../../utils/markdown";
 import { isExternalUrl, resolveLocalImagePath, joinPath, dirName } from "../../utils/filePath";
 import { openExternal, openPath } from "../../utils/fileActions";
+import { toggleTaskOnLine } from "../../utils/editorCommands";
 import { sanitizeHtml } from "../../utils/sanitize";
 import { useAppStore } from "../../stores/appStore";
 import { useSearchStore } from "../../stores/searchStore";
@@ -102,6 +103,17 @@ export function MarkdownPreview({
         if (docPath) {
           void openExternal(convertFileSrc(joinPath(dirName(docPath), href)));
         }
+      });
+    });
+
+    /* ---------------- 任务列表：预览内可勾选，回写源码 ---------------- */
+    root.querySelectorAll<HTMLInputElement>("input.task-box").forEach((box) => {
+      box.disabled = false;
+      box.removeAttribute("disabled");
+      box.addEventListener("change", () => {
+        const line = Number(box.getAttribute("data-line"));
+        if (Number.isFinite(line)) toggleTaskOnLine(line);
+        else box.checked = !box.checked;
       });
     });
 

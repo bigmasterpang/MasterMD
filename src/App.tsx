@@ -15,6 +15,7 @@ import { SettingsModal } from "./components/Settings/SettingsModal";
 import {
   ConfirmDialog,
   ConflictDialog,
+  FormDialog,
   MessageDialog,
   UnsavedDialog,
 } from "./components/Dialogs/Dialogs";
@@ -238,6 +239,7 @@ export default function App() {
       <ConflictDialog />
       <ConfirmDialog />
       <MessageDialog />
+      <FormDialog />
       <UpdateDialog />
     </div>
   );

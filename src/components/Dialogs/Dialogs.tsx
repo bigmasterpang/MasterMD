@@ -1,3 +1,4 @@
+import { useEffect, useState } from "react";
 import { Modal, Button } from "../common/Modal";
 import { Icon } from "../common/Icon";
 import { useDialogStore } from "../../stores/dialogStore";
@@ -133,6 +134,66 @@ export function MessageDialog() {
       }
     >
       <div className="whitespace-pre-wrap break-words">{text}</div>
+    </Modal>
+  );
+}
+
+/** 通用表单弹窗：用于插入链接 / 图片等需要输入参数的场景 */
+export function FormDialog() {
+  const { open, title, fields, confirmText, resolve } = useDialogStore((s) => s.form);
+  const [values, setValues] = useState<Record<string, string>>({});
+
+  // 打开时初始化字段值
+  useEffect(() => {
+    if (!open) return;
+    const init: Record<string, string> = {};
+    for (const field of fields) init[field.key] = field.value ?? "";
+    setValues(init);
+  }, [open, fields]);
+
+  const done = (result: Record<string, string> | null) => {
+    useDialogStore.getState().setForm({ open: false, resolve: null });
+    resolve?.(result);
+  };
+
+  return (
+    <Modal
+      open={open}
+      title={title}
+      onClose={() => done(null)}
+      width={460}
+      footer={
+        <>
+          <Button onClick={() => done(null)}>取消</Button>
+          <Button variant="primary" onClick={() => done(values)}>
+            {confirmText}
+          </Button>
+        </>
+      }
+    >
+      <div className="space-y-3">
+        {fields.map((field, index) => (
+          <label key={field.key} className="block">
+            <span className="mb-1 block text-[12px] text-muted">{field.label}</span>
+            <input
+              autoFocus={field.autofocus ?? index === 0}
+              value={values[field.key] ?? ""}
+              placeholder={field.placeholder}
+              spellCheck={false}
+              onChange={(event) =>
+                setValues((prev) => ({ ...prev, [field.key]: event.target.value }))
+              }
+              onKeyDown={(event) => {
+                if (event.key === "Enter") {
+                  event.preventDefault();
+                  done(values);
+                }
+              }}
+              className="w-full rounded-md border border-line bg-input px-2.5 py-1.5 text-[12px] text-fg outline-none placeholder:text-faint focus:border-accent"
+            />
+          </label>
+        ))}
+      </div>
     </Modal>
   );
 }

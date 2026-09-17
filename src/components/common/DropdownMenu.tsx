@@ -69,7 +69,7 @@ export function DropdownMenu({
         onClick={() => setOpen((value) => !value)}
         className={`flex h-7 items-center gap-1 rounded-md px-2 text-[12px] transition-colors disabled:cursor-not-allowed disabled:opacity-40 ${
           open || active
-            ? "bg-accent-soft text-accent"
+            ? "bg-accent-soft-strong font-medium text-accent"
             : "text-muted hover:bg-hover hover:text-fg"
         }`}
       >
@@ -115,7 +115,7 @@ function MenuRow({ item, onDone }: { item: MenuItem; onDone: () => void }): Reac
         item.onClick();
       }}
       className={`flex w-full items-center gap-2 px-3 py-[6px] text-left text-[12px] transition-colors disabled:cursor-not-allowed disabled:opacity-40 ${
-        item.active ? "bg-accent-soft text-accent" : "text-fg hover:bg-hover"
+        item.active ? "bg-accent-soft-strong font-medium text-accent" : "text-fg hover:bg-hover"
       }`}
     >
       {item.icon ? <Icon name={item.icon} size={14} className="shrink-0 opacity-70" /> : <span className="w-[14px] shrink-0" />}

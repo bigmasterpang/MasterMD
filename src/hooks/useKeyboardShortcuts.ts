@@ -11,8 +11,6 @@ import {
   insertCallout,
   insertCodeBlock,
   insertHorizontalRule,
-  insertImage,
-  insertLink,
   insertTable,
   insertToc,
   moveLines,
@@ -191,15 +189,18 @@ export function useKeyboardShortcuts(): void {
         case "i": {
           if (!editable || event.altKey) break;
           event.preventDefault();
-          if (event.shiftKey) insertImage();
-          else toggleItalic();
+          if (event.shiftKey) {
+            void import("../components/Toolbar/Toolbar").then((m) => m.promptInsert("image"));
+          } else {
+            toggleItalic();
+          }
           break;
         }
         case "k": {
           if (!editable || event.altKey) break;
           event.preventDefault();
           if (event.shiftKey) deleteLines();
-          else insertLink();
+          else void import("../components/Toolbar/Toolbar").then((m) => m.promptInsert("link"));
           break;
         }
         case "`": {

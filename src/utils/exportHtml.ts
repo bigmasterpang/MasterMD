@@ -81,7 +81,10 @@ body{margin:0;background:var(--bg);color:var(--text);font-family:"Segoe UI","Mic
 .md-body th,.md-body td{padding:.45em .85em;border:1px solid var(--border)}
 .md-body th{background:var(--panel);font-weight:600}
 .md-body hr{height:1px;border:none;background:var(--border);margin:1.8em 0}
-.md-body ul,.md-body ol{padding-left:1.6em}
+.md-body ul{list-style:disc}.md-body ul ul{list-style:circle}.md-body ul ul ul{list-style:square}
+.md-body ol{list-style:decimal}.md-body ol ol{list-style:lower-alpha}
+.md-body ul,.md-body ol{padding-left:1.7em}
+.md-body li{margin:.3em 0}
 .md-body .task-item{list-style:none;margin-left:-1.35em}
 .md-body .mermaid-block{margin:1em 0;padding:1em;background:var(--panel);border:1px solid var(--border);border-radius:8px;text-align:center;overflow-x:auto}
 .md-body .front-matter{margin-bottom:1.5em;padding:.75em 1em;border:1px solid var(--border);border-radius:8px;background:var(--panel);font-size:.9em}

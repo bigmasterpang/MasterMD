@@ -1,4 +1,4 @@
-﻿import { useEffect, useRef } from "react";
+import { useEffect, useRef } from "react";
 import { Icon } from "../common/Icon";
 import { useSearchStore } from "../../stores/searchStore";
 import { useAppStore } from "../../stores/appStore";
@@ -48,7 +48,7 @@ export function SearchBar() {
   const toggleClass = (active: boolean) =>
     `flex h-6 w-6 items-center justify-center rounded text-[11px] font-medium transition-colors ${
       active
-        ? "bg-accent-soft text-accent"
+        ? "bg-accent-soft-strong font-semibold text-accent"
         : "text-muted hover:bg-hover hover:text-fg"
     }`;
 
@@ -188,7 +188,7 @@ export function SearchBar() {
             type="button"
             title="替换全部匹配"
             onClick={() => useSearchStore.getState().replaceAll()}
-            className="h-7 shrink-0 rounded border border-transparent bg-accent px-2.5 text-[11px] font-medium text-accent-fg hover:opacity-90"
+            className="h-7 shrink-0 rounded border border-transparent bg-accent px-2.5 text-[11px] font-semibold text-accent-fg hover:opacity-90"
           >
             全部替换
           </button>

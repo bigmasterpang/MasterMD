@@ -30,11 +30,29 @@ interface MessageState {
   resolve: (() => void) | null;
 }
 
+export interface FormField {
+  key: string;
+  label: string;
+  placeholder?: string;
+  value?: string;
+  /** 获得焦点时是否全选内容 */
+  autofocus?: boolean;
+}
+
+interface FormState {
+  open: boolean;
+  title: string;
+  fields: FormField[];
+  confirmText: string;
+  resolve: ((values: Record<string, string> | null) => void) | null;
+}
+
 interface DialogStore {
   unsaved: UnsavedState;
   conflict: ConflictState;
   confirm: ConfirmState;
   message: MessageState;
+  form: FormState;
   settingsVisible: boolean;
   shortcutsVisible: boolean;
 
@@ -44,6 +62,7 @@ interface DialogStore {
   setConflict: (patch: Partial<ConflictState>) => void;
   setConfirm: (patch: Partial<ConfirmState>) => void;
   setMessage: (patch: Partial<MessageState>) => void;
+  setForm: (patch: Partial<FormState>) => void;
 }
 
 export const useDialogStore = create<DialogStore>((set) => ({
@@ -51,6 +70,7 @@ export const useDialogStore = create<DialogStore>((set) => ({
   conflict: { open: false, name: "", resolve: null },
   confirm: { open: false, request: null, resolve: null },
   message: { open: false, title: "", text: "", resolve: null },
+  form: { open: false, title: "", fields: [], confirmText: "插入", resolve: null },
   settingsVisible: false,
   shortcutsVisible: false,
 
@@ -60,6 +80,7 @@ export const useDialogStore = create<DialogStore>((set) => ({
   setConflict: (patch) => set((s) => ({ conflict: { ...s.conflict, ...patch } })),
   setConfirm: (patch) => set((s) => ({ confirm: { ...s.confirm, ...patch } })),
   setMessage: (patch) => set((s) => ({ message: { ...s.message, ...patch } })),
+  setForm: (patch) => set((s) => ({ form: { ...s.form, ...patch } })),
 }));
 
 /** 询问用户是否保存未保存的变更 */
@@ -87,5 +108,22 @@ export function askConfirm(request: ConfirmRequest): Promise<boolean> {
 export function showMessage(title: string, text: string): Promise<void> {
   return new Promise((resolve) => {
     useDialogStore.getState().setMessage({ open: true, title, text, resolve });
+  });
+}
+
+/** 通用表单弹窗（插入链接 / 图片等），取消返回 null */
+export function askForm(options: {
+  title: string;
+  fields: FormField[];
+  confirmText?: string;
+}): Promise<Record<string, string> | null> {
+  return new Promise((resolve) => {
+    useDialogStore.getState().setForm({
+      open: true,
+      title: options.title,
+      fields: options.fields,
+      confirmText: options.confirmText ?? "插入",
+      resolve,
+    });
   });
 }

@@ -99,9 +99,9 @@ export function Button({
 }: ButtonProps) {
   const cls =
     variant === "primary"
-      ? "bg-accent text-accent-fg border-transparent hover:opacity-90"
+      ? "bg-accent text-accent-fg border-transparent font-semibold hover:opacity-90"
       : variant === "danger"
-        ? "bg-danger text-white border-transparent hover:opacity-90"
+        ? "bg-danger text-white border-transparent font-semibold hover:opacity-90"
         : variant === "ghost"
           ? "bg-transparent border-transparent text-muted hover:bg-hover hover:text-fg"
           : "bg-elevated border-line text-fg hover:bg-hover";

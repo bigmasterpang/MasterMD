@@ -17,10 +17,12 @@
   --border: #e4e6eb;
   --border-strong: #d0d4dc;
   --text: #1f2328;
-  --text-muted: #616a75;
-  --text-faint: #8b949e;
-  --accent: #2563eb;
-  --accent-soft: rgba(37, 99, 235, 0.12);
+  --text-muted: #5b6470;
+  --text-faint: #7c8794;
+  /* 浅色下加深强调色，保证白字对比度 ≥ 6:1，浅底强调文字 ≥ 5:1 */
+  --accent: #1d4ed8;
+  --accent-soft: rgba(29, 78, 216, 0.14);
+  --accent-soft-strong: rgba(29, 78, 216, 0.22);
   --accent-fg: #ffffff;
   --danger: #cf222e;
   --danger-soft: rgba(207, 34, 46, 0.12);
@@ -56,6 +58,7 @@ html.dark {
   --text-faint: #7d838c;
   --accent: #4c8dff;
   --accent-soft: rgba(76, 141, 255, 0.16);
+  --accent-soft-strong: rgba(76, 141, 255, 0.26);
   --accent-fg: #0b1220;
   --danger: #f85149;
   --danger-soft: rgba(248, 81, 73, 0.16);
@@ -70,36 +73,44 @@ html.dark {
 
 /* 配色方案（P2）：仅替换强调色 */
 html[data-accent="violet"] {
-  --accent: #7c3aed;
-  --accent-soft: rgba(124, 58, 237, 0.14);
+  --accent: #6d28d9;
+  --accent-soft: rgba(109, 40, 217, 0.14);
+  --accent-soft-strong: rgba(109, 40, 217, 0.22);
 }
 html.dark[data-accent="violet"] {
   --accent: #a78bfa;
   --accent-soft: rgba(167, 139, 250, 0.18);
+  --accent-soft-strong: rgba(167, 139, 250, 0.28);
 }
 html[data-accent="emerald"] {
-  --accent: #059669;
-  --accent-soft: rgba(5, 150, 105, 0.14);
+  --accent: #047857;
+  --accent-soft: rgba(4, 120, 87, 0.14);
+  --accent-soft-strong: rgba(4, 120, 87, 0.22);
 }
 html.dark[data-accent="emerald"] {
   --accent: #34d399;
   --accent-soft: rgba(52, 211, 153, 0.18);
+  --accent-soft-strong: rgba(52, 211, 153, 0.28);
 }
 html[data-accent="amber"] {
-  --accent: #d97706;
-  --accent-soft: rgba(217, 119, 6, 0.14);
+  --accent: #b45309;
+  --accent-soft: rgba(180, 83, 9, 0.14);
+  --accent-soft-strong: rgba(180, 83, 9, 0.22);
 }
 html.dark[data-accent="amber"] {
   --accent: #fbbf24;
   --accent-soft: rgba(251, 191, 36, 0.18);
+  --accent-soft-strong: rgba(251, 191, 36, 0.28);
 }
 html[data-accent="rose"] {
-  --accent: #e11d48;
-  --accent-soft: rgba(225, 29, 72, 0.14);
+  --accent: #be123c;
+  --accent-soft: rgba(190, 18, 60, 0.14);
+  --accent-soft-strong: rgba(190, 18, 60, 0.22);
 }
 html.dark[data-accent="rose"] {
   --accent: #fb7185;
   --accent-soft: rgba(251, 113, 133, 0.18);
+  --accent-soft-strong: rgba(251, 113, 133, 0.28);
 }
 
 @theme inline {
@@ -116,6 +127,7 @@ html.dark[data-accent="rose"] {
   --color-faint: var(--text-faint);
   --color-accent: var(--accent);
   --color-accent-soft: var(--accent-soft);
+  --color-accent-soft-strong: var(--accent-soft-strong);
   --color-accent-fg: var(--accent-fg);
   --color-danger: var(--danger);
   --color-danger-soft: var(--danger-soft);
@@ -273,17 +285,40 @@ textarea {
   color: var(--text-muted);
 }
 
+/* 列表：Tailwind preflight 会清空 list-style，这里显式恢复序号/项目符号 */
 .md-body ul,
 .md-body ol {
   margin: 0.85em 0;
-  padding-left: 1.6em;
+  padding-left: 1.7em;
+}
+.md-body ul {
+  list-style: disc;
+}
+.md-body ul ul {
+  list-style: circle;
+}
+.md-body ul ul ul {
+  list-style: square;
+}
+.md-body ol {
+  list-style: decimal;
+}
+.md-body ol ol {
+  list-style: lower-alpha;
+}
+.md-body ol ol ol {
+  list-style: lower-roman;
 }
 .md-body li {
   margin: 0.3em 0;
+  display: list-item;
 }
 .md-body li > ul,
 .md-body li > ol {
   margin: 0.3em 0;
+}
+.md-body li::marker {
+  color: var(--text-muted);
 }
 .md-body .task-item {
   list-style: none;

@@ -28,7 +28,7 @@ export function WelcomeScreen() {
           <button
             type="button"
             onClick={() => void openFileDialog()}
-            className="flex flex-1 items-center justify-center gap-2 rounded-[var(--radius)] bg-accent px-4 py-2.5 text-[13px] font-medium text-accent-fg transition-opacity hover:opacity-90"
+            className="flex flex-1 items-center justify-center gap-2 rounded-[var(--radius)] bg-accent px-4 py-2.5 text-[13px] font-semibold text-accent-fg transition-opacity hover:opacity-90"
           >
             <Icon name="folder-open" size={16} />
             打开文件
