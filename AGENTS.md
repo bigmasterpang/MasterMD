@@ -46,6 +46,14 @@ $content = Get-Content -LiteralPath "<utf8 内容文件>" -Raw -Encoding UTF8
 - 严禁塞入完整 SHA256、多行 commit 日志、长篇 Markdown
 - 卡片正文不超过 350 字（脚本会自动截断收尾）
 
+### 发布脚本编码陷阱（务必遵守）
+
+PowerShell 5.1 会把 **无 BOM 的 UTF-8 脚本按 GBK 解析**：脚本里的中文注释可能吞掉行尾换行，导致下一行代码被并入注释而静默失效（曾导致 Release 资产名错误）。因此：
+
+- 发布用 `.ps1` 脚本**只用 ASCII 注释**；中文说明一律写入单独的 UTF-8 文件后用 `-Encoding UTF8` 读取
+- 必须含中文的脚本要用「UTF-8 with BOM」保存
+- 上传 Release 资产前先确认本地文件名与 `?name=` 参数一致，传完用 API 复核 `releases/latest` 的资产名
+
 ## 代码约定
 
 - TypeScript strict；函数组件 + Hooks；全局状态用 Zustand；不使用大型 UI 库
