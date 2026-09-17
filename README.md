@@ -1,4 +1,4 @@
-# mdview — Windows Markdown 查看与简易编辑器
+# mastermd — Windows Markdown 查看与简易编辑器
 
 基于 **Tauri 2 + Rust + React 19 + TypeScript + Vite + TailwindCSS 4 + CodeMirror 6** 的 Windows 桌面 Markdown 查看器与轻量编辑器。安装包体积小、冷启动快、界面现代，支持深色/浅色主题。
 
@@ -109,8 +109,8 @@ pnpm build            # 仅构建前端（输出到 dist/）
 ```bash
 pnpm tauri build              # 生成 NSIS 安装包
 # 产物：
-#   src-tauri/target/release/mdview.exe
-#   src-tauri/target/release/bundle/nsis/mdview_0.1.0_x64-setup.exe
+#   src-tauri/target/release/mastermd.exe
+#   src-tauri/target/release/bundle/nsis/mastermd_0.3.0_x64-setup.exe
 ```
 
 打包配置要点（`src-tauri/tauri.conf.json`）：
@@ -118,7 +118,7 @@ pnpm tauri build              # 生成 NSIS 安装包
 - `bundle.targets = ["nsis"]`，`webviewInstallMode = downloadBootstrapper`（不内嵌 WebView2 运行时）
 - `installMode = currentUser`（免管理员权限安装）
 - 注册 `.md` / `.markdown` / `.mdown` 文件关联
-- `fileAssociations` 配合 Rust 端 `get_startup_file`，实现双击文件直接用 mdview 打开
+- `fileAssociations` 配合 Rust 端 `get_startup_file`，实现双击文件直接用 mastermd 打开
 
 Rust 发布优化（`src-tauri/Cargo.toml`）：
 

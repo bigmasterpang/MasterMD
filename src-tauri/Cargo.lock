@@ -2071,8 +2071,8 @@ dependencies = [
 ]
 
 [[package]]
-name = "mdview"
-version = "0.2.0"
+name = "mastermd"
+version = "0.3.0"
 dependencies = [
  "notify",
  "serde",

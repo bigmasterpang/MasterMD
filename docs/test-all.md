@@ -24,7 +24,7 @@ graph LR
 
 ```rust
 fn main() {
-    let msg = "Hello, mdview";
+    let msg = "Hello, mastermd";
     println!("{}", msg);
 }
 ```

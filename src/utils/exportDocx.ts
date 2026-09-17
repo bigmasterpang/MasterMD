@@ -420,9 +420,9 @@ export async function buildDocxBlob(
   }
 
   const document = new Document({
-    creator: "mdview",
+    creator: "mastermd",
     title,
-    description: "由 mdview 导出",
+    description: "由 mastermd 导出",
     numbering: {
       config: [
         {

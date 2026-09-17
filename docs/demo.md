@@ -1,14 +1,14 @@
 ---
-title: mdview 功能验证文档
-author: mdview
+title: mastermd 功能验证文档
+author: mastermd
 tags: [markdown, tauri, test]
 version: 0.1.0
 draft: false
 ---
 
-# mdview 功能验证文档
+# mastermd 功能验证文档
 
-这是一个用于验证 **mdview** 渲染与编辑能力的测试文档。
+这是一个用于验证 **mastermd** 渲染与编辑能力的测试文档。
 
 ## 1. 基础排版
 
@@ -91,7 +91,7 @@ pnpm tauri dev
 ```
 
 ```json
-{ "name": "mdview", "version": "0.1.0", "private": true }
+{ "name": "mastermd", "version": "0.1.0", "private": true }
 ```
 
 ```sql

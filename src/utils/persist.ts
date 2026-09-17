@@ -16,7 +16,7 @@ interface UiState {
   windowHeight: number;
 }
 
-const STORE_FILE = "mdview-store.json";
+const STORE_FILE = "mastermd-store.json";
 let file: LazyStore | null = null;
 let uiCache: UiState = {
   viewMode: "split",

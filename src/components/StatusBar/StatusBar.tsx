@@ -3,6 +3,7 @@ import { useAppStore } from "../../stores/appStore";
 import { useUpdateStore } from "../../stores/updateStore";
 import { Icon } from "../common/Icon";
 import { countWords, formatBytes } from "../../utils/timing";
+import { APP_NAME } from "../../utils/constants";
 import { fileName } from "../../utils/filePath";
 import { extractFrontMatter } from "../../utils/frontMatter";
 
@@ -58,7 +59,7 @@ export function StatusBar() {
       <span className="flex min-w-0 items-center gap-1">
         {doc?.isDirty ? <span className="text-accent">●</span> : null}
         <span className="truncate" title={doc?.filePath ?? "未保存"}>
-          {doc ? (doc.filePath ? fileName(doc.filePath) : "未命名文档") : "mdview"}
+          {doc ? (doc.filePath ? fileName(doc.filePath) : "未命名文档") : APP_NAME}
         </span>
       </span>
 

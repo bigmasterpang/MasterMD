@@ -1,4 +1,4 @@
-export const APP_NAME = "mdview";
+export const APP_NAME = "mastermd";
 
 /** 可打开为 Markdown 的扩展名 */
 export const MARKDOWN_EXTENSIONS = ["md", "markdown", "mdown", "mkd", "mkdn"];

@@ -35,6 +35,7 @@ import {
   saveActiveAs,
 } from "../utils/fileActions";
 import { matchesShortcut } from "../utils/shortcuts";
+import { APP_NAME } from "../utils/constants";
 import type { ShortcutId } from "../types";
 
 const BINDABLE: ShortcutId[] = [
@@ -311,7 +312,7 @@ export function useKeyboardShortcuts(): void {
 export function useWindowTitle(): void {
   const doc = useAppStore((s) => s.docs.find((d) => d.id === s.activeId) ?? null);
   const name = doc?.filePath ? doc.filePath.split(/[\\/]/).pop() || "未命名" : "未命名";
-  const title = doc ? `${doc.isDirty ? "● " : ""}${name} - mdview` : "mdview";
+  const title = doc ? `${doc.isDirty ? "● " : ""}${name} - ${APP_NAME}` : APP_NAME;
 
   useEffect(() => {
     document.title = title;

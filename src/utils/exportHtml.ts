@@ -123,7 +123,7 @@ export function buildExportHtml(
 ${bodyHtml}
 </div>
 </div>
-<!-- 内联图片 ${embeddedImages} 张；由 mdview 导出 -->
+<!-- 内联图片 ${embeddedImages} 张；由 mastermd 导出 -->
 </body>
 </html>
 `;

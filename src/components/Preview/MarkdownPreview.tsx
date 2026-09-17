@@ -141,7 +141,7 @@ export function MarkdownPreview({
           const target = document.createElement("div");
           target.className = "mermaid-block";
           try {
-            const id = `mdview-mermaid-${++mermaidSeq}`;
+            const id = `mastermd-mermaid-${++mermaidSeq}`;
             const { svg } = await mermaid.render(id, graph);
             target.innerHTML = svg;
           } catch (error) {

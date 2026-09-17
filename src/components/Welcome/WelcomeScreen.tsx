@@ -1,5 +1,6 @@
 import { Icon } from "../common/Icon";
 import { useAppStore } from "../../stores/appStore";
+import { APP_NAME } from "../../utils/constants";
 import { newDocument, openFileDialog, openPath, removeRecentFile } from "../../utils/fileActions";
 import { fileName } from "../../utils/filePath";
 
@@ -16,7 +17,7 @@ export function WelcomeScreen() {
             <Icon name="file-text" size={22} />
           </div>
           <div>
-            <div className="text-[19px] font-semibold text-fg">mdview</div>
+            <div className="text-[19px] font-semibold text-fg">{APP_NAME}</div>
             <div className="text-[12px] text-muted">
               Markdown 查看与简易编辑器
             </div>
