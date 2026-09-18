@@ -1,0 +1,58 @@
+param(
+    [string]$FilePath = "",
+    [string]$Version = "",
+    [string]$ReleaseNotes = "",
+    [string]$NotesFilePath = "",
+    [switch]$Build
+)
+
+$ErrorActionPreference = "Stop"
+$projectRoot = Split-Path -Parent $PSScriptRoot
+
+# 1. Build the release (optional)
+if ($Build) {
+    Write-Host "[*] Building frontend + Tauri release bundle..." -ForegroundColor Cyan
+    Push-Location $projectRoot
+    try {
+        & pnpm tauri build
+        if ($LASTEXITCODE -ne 0) { throw "pnpm tauri build failed" }
+    } finally {
+        Pop-Location
+    }
+}
+
+# 2. Locate the NSIS installer
+if (-not $FilePath) {
+    $bundleDir = Join-Path $projectRoot "src-tauri\target\release\bundle\nsis"
+    $candidate = Get-ChildItem -LiteralPath $bundleDir -Filter "mastermd_*_x64-setup.exe" -ErrorAction SilentlyContinue |
+        Sort-Object LastWriteTime -Descending | Select-Object -First 1
+    if (-not $candidate) { throw "Installer not found in $bundleDir, run with -Build first" }
+    $FilePath = $candidate.FullName
+}
+
+# 3. Read version from tauri.conf.json when not provided
+if (-not $Version) {
+    $confPath = Join-Path $projectRoot "src-tauri\tauri.conf.json"
+    $conf = Get-Content -LiteralPath $confPath -Raw -Encoding UTF8 | ConvertFrom-Json
+    $Version = $conf.version
+}
+if (-not $Version) { throw "Version could not be determined" }
+
+# 4. Release notes: file > git log > default
+if (-not $ReleaseNotes -and $NotesFilePath -and (Test-Path -LiteralPath $NotesFilePath)) {
+    $ReleaseNotes = (Get-Content -LiteralPath $NotesFilePath -Raw -Encoding UTF8).Trim()
+}
+if (-not $ReleaseNotes) {
+    try {
+        $ReleaseNotes = (git -C $projectRoot log -1 --pretty=%B).Trim()
+    } catch { }
+    if (-not $ReleaseNotes) { $ReleaseNotes = "MasterMD $Version released" }
+}
+
+# 5. Publish to both portal nodes
+& (Join-Path $projectRoot "..\tools\publish-release.ps1") `
+    -App "mastermd" `
+    -Platform "windows" `
+    -FilePath $FilePath `
+    -Version $Version `
+    -ReleaseNotes $ReleaseNotes

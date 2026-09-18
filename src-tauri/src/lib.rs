@@ -81,6 +81,14 @@ pub fn run() {
             watch::unwatch_file,
             #[cfg(windows)]
             commands::pdf::print_to_pdf,
+            #[cfg(windows)]
+            commands::update::check_update,
+            #[cfg(windows)]
+            commands::update::download_update,
+            #[cfg(windows)]
+            commands::update::run_installer,
+            #[cfg(windows)]
+            commands::update::reveal_in_explorer,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

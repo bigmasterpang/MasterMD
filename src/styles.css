@@ -138,22 +138,33 @@ html.dark[data-accent="rose"] {
 
 /* ------------------------------------------------------------------ */
 /* 基础样式                                                            */
+/* 注意：元素级重置必须放在 @layer base 中。Tailwind 的 utilities 位于  */
+/* @layer utilities，而未分层的 CSS（unlayered）优先级高于任何分层样式， */
+/* 若把 button{color:inherit} 写成未分层，会覆盖 text-* 工具类，         */
+/* 导致 primary 按钮文字变成继承色（深色）而非白色。                     */
 /* ------------------------------------------------------------------ */
-html,
-body,
-#root {
-  height: 100%;
-}
+@layer base {
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
 
-body {
-  margin: 0;
-  font-family: var(--font-ui);
-  font-size: var(--ui-size);
-  color: var(--text);
-  background: var(--bg);
-  -webkit-font-smoothing: antialiased;
-  overflow: hidden;
-  user-select: none;
+  body {
+    margin: 0;
+    font-family: var(--font-ui);
+    font-size: var(--ui-size);
+    color: var(--text);
+    background: var(--bg);
+    -webkit-font-smoothing: antialiased;
+    overflow: hidden;
+    user-select: none;
+  }
+
+  input,
+  textarea {
+    font-family: inherit;
+  }
 }
 
 ::selection {
@@ -185,17 +196,6 @@ body {
 }
 ::-webkit-scrollbar-corner {
   background: transparent;
-}
-
-button {
-  font-family: inherit;
-  font-size: inherit;
-  color: inherit;
-}
-
-input,
-textarea {
-  font-family: inherit;
 }
 
 /* 拖拽遮罩 */
