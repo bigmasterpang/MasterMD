@@ -98,6 +98,9 @@ export function useKeyboardShortcuts(): void {
     const handler = (event: KeyboardEvent) => {
       try {
         handleKey(event);
+        // 已在处理函数中 preventDefault 的按键，阻止继续传播给 CodeMirror
+        // 等内部处理器（否则 Alt+↑ 会被编辑器同时执行"上移行"）
+        if (event.defaultPrevented) event.stopPropagation();
       } catch (error) {
         // 单个快捷键异常不应影响其它功能
         console.error("[mastermd] 快捷键处理失败", event.key, error);
@@ -320,8 +323,9 @@ export function useKeyboardShortcuts(): void {
       }
     };
 
-    window.addEventListener("keydown", handler);
-    return () => window.removeEventListener("keydown", handler);
+    // 使用捕获阶段，保证应用快捷键优先于 CodeMirror 的内部按键绑定
+    window.addEventListener("keydown", handler, true);
+    return () => window.removeEventListener("keydown", handler, true);
   }, []);
 
   // Ctrl+滚轮缩放字号

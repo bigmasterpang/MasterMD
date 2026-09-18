@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Icon } from "../common/Icon";
 import { useAppStore } from "../../stores/appStore";
+import { useSettingsStore } from "../../stores/settingsStore";
 import { scrollToLine } from "../../utils/editorCommands";
 import type { HeadingItem } from "../../types";
 
@@ -20,6 +21,7 @@ export function OutlineSidebar({ previewRef }: Props) {
     (s) => s.docs.find((d) => d.id === s.activeId)?.headings ?? EMPTY_HEADINGS,
   );
   const viewMode = useAppStore((s) => s.viewMode);
+  const maxLevel = useSettingsStore((s) => s.outlineMaxLevel);
   const [collapsed, setCollapsed] = useState<Set<string>>(() => new Set());
   const [activeId, setActiveId] = useState<string | null>(null);
   const listRef = useRef<HTMLDivElement>(null);
@@ -31,18 +33,20 @@ export function OutlineSidebar({ previewRef }: Props) {
     for (let i = 0; i < headings.length; i++) {
       const heading = headings[i];
       const next = headings[i + 1];
+      // 按等级筛选：只显示 <= maxLevel 的标题
+      if (heading.level > maxLevel) continue;
       if (skipLevel !== null) {
         if (heading.level > skipLevel) continue;
         skipLevel = null;
       }
       rows.push({
         ...heading,
-        hasChildren: Boolean(next && next.level > heading.level),
+        hasChildren: Boolean(next && next.level > heading.level && next.level <= maxLevel),
       });
       if (collapsed.has(heading.id)) skipLevel = heading.level;
     }
     return rows;
-  }, [headings, collapsed]);
+  }, [headings, collapsed, maxLevel]);
 
   /* ---------------- 滚动时高亮当前章节 ---------------- */
   useEffect(() => {
@@ -117,15 +121,34 @@ export function OutlineSidebar({ previewRef }: Props) {
   return (
     <aside className="print-hide flex w-[260px] shrink-0 flex-col border-r border-line bg-sidebar">
       <div className="flex h-8 shrink-0 items-center justify-between border-b border-line px-3 text-[11px] font-medium uppercase tracking-wide text-faint">
-        大纲
-        <button
-          type="button"
-          title="隐藏大纲"
-          onClick={() => useAppStore.getState().setOutlineVisible(false)}
-          className="rounded p-0.5 hover:bg-hover hover:text-fg"
-        >
-          <Icon name="x" size={12} />
-        </button>
+        <span>大纲</span>
+        <div className="flex items-center gap-1">
+          <select
+            value={maxLevel}
+            title="筛选标题等级"
+            onChange={(event) =>
+              useSettingsStore
+                .getState()
+                .set("outlineMaxLevel", Number(event.target.value))
+            }
+            className="h-5 rounded border border-line bg-input px-1 text-[10px] normal-case tracking-normal text-fg outline-none"
+          >
+            <option value={6}>全部等级</option>
+            <option value={1}>仅 H1</option>
+            <option value={2}>H1–H2</option>
+            <option value={3}>H1–H3</option>
+            <option value={4}>H1–H4</option>
+            <option value={5}>H1–H5</option>
+          </select>
+          <button
+            type="button"
+            title="隐藏大纲"
+            onClick={() => useAppStore.getState().setOutlineVisible(false)}
+            className="rounded p-0.5 hover:bg-hover hover:text-fg"
+          >
+            <Icon name="x" size={12} />
+          </button>
+        </div>
       </div>
 
       {headings.length === 0 ? (

@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   EditorState,
   Compartment,
@@ -33,6 +33,7 @@ import { showMessage } from "../../stores/dialogStore";
 import { invoke } from "@tauri-apps/api/core";
 import { createEditorTheme } from "./editorTheme";
 import { searchHighlightField, setSearchHighlight } from "./searchHighlight";
+import { EditorContextMenu } from "./EditorContextMenu";
 
 interface Props {
   docId: string;
@@ -89,6 +90,9 @@ export function CodeMirrorEditor({ docId, isDark }: Props) {
   const hostRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
   const syncingRef = useRef(false);
+  const [menu, setMenu] = useState<{ x: number; y: number; hasSelection: boolean } | null>(
+    null,
+  );
   const content = useAppStore((s) => s.docs.find((d) => d.id === s.activeId)?.content ?? "");
   const showLineNumbers = useSettingsStore((s) => s.showLineNumbers);
   const wordWrap = useSettingsStore((s) => s.wordWrap);
@@ -246,7 +250,49 @@ export function CodeMirrorEditor({ docId, isDark }: Props) {
     });
   }, [readOnly]);
 
-  return <div ref={hostRef} className="h-full w-full overflow-hidden" />;
+  /* ------------------------ 右键菜单 ------------------------ */
+  useEffect(() => {
+    const host = hostRef.current;
+    if (!host) return;
+    const onContextMenu = (event: MouseEvent) => {
+      const view = viewRef.current;
+      if (!view) return;
+      // 只在编辑器区域内响应，且不覆盖浏览器原生菜单以外的行为
+      if (!host.contains(event.target as Node)) return;
+      event.preventDefault();
+      const sel = view.state.selection.main;
+      // 右键位置若在选区外，把光标移动到该处（与常见编辑器一致）
+      const pos = view.posAtCoords({ x: event.clientX, y: event.clientY });
+      if (pos != null) {
+        const insideSelection = pos >= sel.from && pos <= sel.to;
+        if (!insideSelection) {
+          view.dispatch({ selection: { anchor: pos } });
+        }
+      }
+      const current = view.state.selection.main;
+      setMenu({
+        x: event.clientX,
+        y: event.clientY,
+        hasSelection: !current.empty,
+      });
+    };
+    host.addEventListener("contextmenu", onContextMenu);
+    return () => host.removeEventListener("contextmenu", onContextMenu);
+  }, []);
+
+  return (
+    <>
+      <div ref={hostRef} className="h-full w-full overflow-hidden" />
+      {menu ? (
+        <EditorContextMenu
+          x={menu.x}
+          y={menu.y}
+          hasSelection={menu.hasSelection}
+          onClose={() => setMenu(null)}
+        />
+      ) : null}
+    </>
+  );
 }
 
 /** 从剪贴板粘贴图片：保存到 assets/ 并插入相对路径 */

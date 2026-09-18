@@ -82,6 +82,8 @@ export interface Settings {
   recentFilesLimit: number;
   shortcuts: ShortcutMap;
   autoCheckUpdate: boolean;
+  /** 大纲显示的最大标题等级（1-6） */
+  outlineMaxLevel: number;
 }
 
 /** 未保存变更弹窗结果 */

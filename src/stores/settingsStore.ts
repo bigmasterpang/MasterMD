@@ -16,6 +16,7 @@ export const DEFAULT_SETTINGS: Settings = {
   recentFilesLimit: 10,
   shortcuts: { ...DEFAULT_SHORTCUTS },
   autoCheckUpdate: true,
+  outlineMaxLevel: 6,
 };
 
 interface SettingsStore extends Settings {
@@ -47,6 +48,9 @@ function clampSettings(patch: Partial<Settings>): Partial<Settings> {
   }
   if (out.accent && !["blue", "violet", "emerald", "amber", "rose"].includes(out.accent)) {
     delete out.accent;
+  }
+  if (typeof out.outlineMaxLevel === "number") {
+    out.outlineMaxLevel = Math.min(6, Math.max(1, Math.round(out.outlineMaxLevel)));
   }
   if (out.shortcuts) {
     const merged = { ...DEFAULT_SHORTCUTS };
@@ -84,5 +88,6 @@ export function pickSettings(state: SettingsStore): Settings {
     recentFilesLimit: state.recentFilesLimit,
     shortcuts: state.shortcuts,
     autoCheckUpdate: state.autoCheckUpdate,
+    outlineMaxLevel: state.outlineMaxLevel,
   };
 }

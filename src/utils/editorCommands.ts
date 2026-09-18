@@ -118,7 +118,86 @@ function applyChanges(view: EditorView, changes: ChangeSpec[]): void {
 
 /* ------------------------------ 内联格式 ------------------------------ */
 
-/** 用定界符包裹选中文本；未选中时插入占位文本并选中 */
+/**
+ * 切换包裹类格式（粗体、斜体、删除线、行内代码、上下标等）。
+ * 已包裹则移除定界符，未包裹则包裹 —— 支持三种情况：
+ * 1. 选区包含定界符：选中 `*text*` → 移除；
+ * 2. 选区外侧紧邻定界符：光标/选区在 `*text*` 内 → 移除；
+ * 3. 其它情况 → 包裹（空选区时扩展到所在单词）。
+ */
+export function toggleWrap(
+  marker: string,
+  placeholder = "",
+  options: { word?: boolean } = {},
+): void {
+  withEditorView((view) => {
+    const state = view.state;
+    const length = marker.length;
+    let { from, to } = safeSelection(state);
+
+    // 空光标：扩展到所在单词（不含空白与定界符字符）
+    if (from === to && options.word !== false) {
+      const line = state.doc.lineAt(from);
+      const isWordChar = (ch: string) =>
+        ch.length > 0 && !/\s/.test(ch) && !marker.includes(ch);
+      let start = from;
+      let end = to;
+      while (start > line.from && isWordChar(state.sliceDoc(start - 1, start))) start -= 1;
+      while (end < line.to && isWordChar(state.sliceDoc(end, end + 1))) end += 1;
+      if (end > start) {
+        from = start;
+        to = end;
+      }
+    }
+
+    const selected = state.sliceDoc(from, to);
+
+    // 情况 1：选区自带定界符
+    if (
+      selected.length >= length * 2 &&
+      selected.startsWith(marker) &&
+      selected.endsWith(marker)
+    ) {
+      const inner = selected.slice(length, selected.length - length);
+      view.dispatch({
+        changes: safeChange(state, from, to, inner),
+        selection: { anchor: from, head: from + inner.length },
+        scrollIntoView: true,
+      });
+      view.focus();
+      return;
+    }
+
+    // 情况 2：选区外侧紧邻定界符
+    const before = state.sliceDoc(Math.max(0, from - length), from);
+    const after = state.sliceDoc(to, Math.min(state.doc.length, to + length));
+    if (before === marker && after === marker) {
+      const outerFrom = from - length;
+      view.dispatch({
+        changes: safeChange(state, outerFrom, to + length, selected),
+        selection: { anchor: outerFrom, head: outerFrom + selected.length },
+        scrollIntoView: true,
+      });
+      view.focus();
+      return;
+    }
+
+    // 情况 3：包裹
+    if (!selected && !placeholder) return;
+    const text = selected || placeholder;
+    view.dispatch({
+      changes: safeChange(state, from, to, `${marker}${text}${marker}`),
+      selection: {
+        anchor: from + length,
+        head: from + length + text.length,
+      },
+      scrollIntoView: true,
+    });
+    view.focus();
+  });
+}
+
+/** 用定界符包裹选中文本；未选中时插入占位文本并选中（不做切换检测） */
 export function wrapSelection(before: string, after = before, placeholder = ""): void {
   withEditorView((view) => {
     const { state } = view;
@@ -171,22 +250,22 @@ export function insertBlock(text: string): void {
 }
 
 export function toggleBold(): void {
-  wrapSelection("**", "**", "粗体");
+  toggleWrap("**", "粗体");
 }
 export function toggleItalic(): void {
-  wrapSelection("*", "*", "斜体");
+  toggleWrap("*", "斜体");
 }
 export function toggleStrikethrough(): void {
-  wrapSelection("~~", "~~", "删除线");
+  toggleWrap("~~", "删除线");
 }
 export function toggleInlineCode(): void {
-  wrapSelection("`", "`", "代码");
+  toggleWrap("`", "代码");
 }
 export function toggleSuperscript(): void {
-  wrapSelection("^", "^", "上标");
+  toggleWrap("^", "上标");
 }
 export function toggleSubscript(): void {
-  wrapSelection("~", "~", "下标");
+  toggleWrap("~", "下标");
 }
 export function insertLink(): void {
   wrapSelection("[", "](https://)", "链接文字");
@@ -614,8 +693,77 @@ export function insertMermaid(): void {
   });
 }
 
-/** 插入 Markdown 链接（由链接对话框调用） */
-export function insertMarkdownLink(text: string, url: string): void {
+/** 复制选区文本到剪贴板 */
+export async function copySelection(): Promise<boolean> {
+  const view = getEditorView();
+  if (!view) return false;
+  const { from, to } = safeSelection(view.state);
+  const text = view.state.sliceDoc(from, to);
+  if (!text) return false;
+  try {
+    await navigator.clipboard.writeText(text);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** 剪切选区文本 */
+export async function cutSelection(): Promise<boolean> {
+  const copied = await copySelection();
+  if (!copied) return false;
+  withEditorView((view) => {
+    const state = view.state;
+    const { from, to } = safeSelection(state);
+    if (from === to) return;
+    view.dispatch({
+      changes: safeChange(state, from, to, ""),
+      selection: { anchor: from },
+      scrollIntoView: true,
+    });
+    view.focus();
+  });
+  return true;
+}
+
+/** 从剪贴板粘贴纯文本（读取失败时返回 false，由调用方提示改用 Ctrl+V） */
+export async function pasteFromClipboard(): Promise<boolean> {
+  try {
+    const text = await navigator.clipboard.readText();
+    if (!text) return false;
+    insertText(text);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** 清除选区内的内联标记（粗体 / 斜体 / 删除线 / 行内代码 / 上下标） */
+export function clearFormatting(): void {
+  withEditorView((view) => {
+    const state = view.state;
+    const { from, to } = safeSelection(state);
+    if (from === to) return;
+    const selected = state.sliceDoc(from, to);
+    const cleaned = selected
+      .replace(/\*\*\*(.+?)\*\*\*/g, "$1")
+      .replace(/\*\*(.+?)\*\*/g, "$1")
+      .replace(/\*(.+?)\*/g, "$1")
+      .replace(/~~(.+?)~~/g, "$1")
+      .replace(/`(.+?)`/g, "$1")
+      .replace(/\^(.+?)\^/g, "$1")
+      .replace(/~(.+?)~/g, "$1");
+    if (cleaned === selected) return;
+    view.dispatch({
+      changes: safeChange(state, from, to, cleaned),
+      selection: { anchor: from, head: from + cleaned.length },
+      scrollIntoView: true,
+    });
+    view.focus();
+  });
+}
+
+/** 插入 Markdown 链接（由链接对话框调用） */export function insertMarkdownLink(text: string, url: string): void {
   const label = text.trim() || url.trim();
   const href = url.trim() || "https://";
   insertInlineSnippet(`[${label}](${href})`);
