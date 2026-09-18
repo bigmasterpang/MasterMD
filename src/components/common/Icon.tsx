@@ -44,6 +44,9 @@ export type IconName =
   | "image"
   | "case-sensitive"
   | "keyboard"
+  | "replace"
+  | "arrow-up-down"
+  | "info"
   | "loader";
 
 const PATHS: Record<IconName, string[]> = {
@@ -142,6 +145,15 @@ const PATHS: Record<IconName, string[]> = {
     "M3 21v-6h6",
   ],
   info: ["M12 22a10 10 0 1 0 0-20 10 10 0 0 0 0 20z", "M12 16v-4", "M12 8h.01"],
+  // 替换：两个箭头互换（区别于 refresh 的循环箭头）
+  replace: [
+    "M4 7h11",
+    "M11 3l4 4-4 4",
+    "M20 17H9",
+    "M13 21l-4-4 4-4",
+  ],
+  // 上下移动 / 滚动同步
+  "arrow-up-down": ["M8 5v14", "M4 9l4-4 4 4", "M16 19V5", "M12 15l4 4 4-4"],
   "external-link": [
     "M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6",
     "M15 3h6v6",

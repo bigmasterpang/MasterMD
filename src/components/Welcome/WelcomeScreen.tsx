@@ -1,6 +1,6 @@
 import { Icon } from "../common/Icon";
 import { useAppStore } from "../../stores/appStore";
-import { APP_NAME } from "../../utils/constants";
+import { APP_NAME, AUTHOR_NAME, AUTHOR_NAME_CN } from "../../utils/constants";
 import { newDocument, openFileDialog, openPath, removeRecentFile } from "../../utils/fileActions";
 import { fileName } from "../../utils/filePath";
 
@@ -19,7 +19,7 @@ export function WelcomeScreen() {
           <div>
             <div className="text-[19px] font-semibold text-fg">{APP_NAME}</div>
             <div className="text-[12px] text-muted">
-              Markdown 查看与简易编辑器
+              Markdown 查看与简易编辑器 · 作者 {AUTHOR_NAME}（{AUTHOR_NAME_CN}）
             </div>
           </div>
         </div>
@@ -85,7 +85,11 @@ export function WelcomeScreen() {
           <code className="rounded bg-panel px-1">.markdown</code> /{" "}
           <code className="rounded bg-panel px-1">.txt</code> 文件拖入窗口即可打开；
           <br />
-          常用快捷键：Ctrl+O 打开 · Ctrl+S 保存 · Ctrl+E 切换视图 · Ctrl+F 搜索
+          常用快捷键：Ctrl+O 打开 · Ctrl+S 保存 · Ctrl+E 切换视图 · F1 快捷键
+        </div>
+
+        <div className="mt-6 text-center text-[11px] text-faint">
+          © 2026 {AUTHOR_NAME}（{AUTHOR_NAME_CN}）· Master 系列软件
         </div>
       </div>
     </div>

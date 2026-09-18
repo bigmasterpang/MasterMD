@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "mastermd",
-  "version": "0.5.0",
+  "productName": "MasterMD",
+  "version": "0.6.0",
   "identifier": "com.masterpang.mastermd",
   "build": {
     "beforeDevCommand": "pnpm dev",
@@ -13,7 +13,7 @@
     "windows": [
       {
         "label": "main",
-        "title": "mastermd",
+        "title": "MasterMD",
         "width": 1200,
         "height": 800,
         "minWidth": 800,
@@ -33,6 +33,10 @@
   "bundle": {
     "active": true,
     "targets": ["nsis"],
+    "publisher": "Master Wang (王大师)",
+    "copyright": "© 2026 Master Wang (王大师). All rights reserved.",
+    "shortDescription": "轻量高效的 Markdown 查看与编辑器",
+    "longDescription": "MasterMD — 基于 Tauri 2 的 Windows Markdown 查看与编辑器：GFM 渲染、公式与 Mermaid 图表、查找替换、多标签页、大纲侧栏、导出 HTML/PNG/DOCX/PDF。作者：Master Wang（王大师）。",
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",

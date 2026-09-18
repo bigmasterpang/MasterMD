@@ -355,13 +355,13 @@ export function Toolbar({ previewRef, isDark }: ToolbarProps) {
         active={searchVisible && !replaceVisible}
         onClick={() => useSearchStore.getState().open(false)}
       />
-      <ToolButton
-        icon="refresh"
-        label="替换 (Ctrl+H)"
-        disabled={!hasDoc}
-        active={searchVisible && replaceVisible}
-        onClick={() => useSearchStore.getState().open(true)}
-      />
+        <ToolButton
+          icon="replace"
+          label="替换 (Ctrl+H)"
+          disabled={!hasDoc}
+          active={searchVisible && replaceVisible}
+          onClick={() => useSearchStore.getState().open(true)}
+        />
       <ToolButton
         icon="list"
         label="大纲侧栏"
@@ -369,12 +369,12 @@ export function Toolbar({ previewRef, isDark }: ToolbarProps) {
         onClick={() => useAppStore.getState().toggleOutline()}
       />
       {viewMode === "split" ? (
-        <ToolButton
-          icon="refresh"
-          label={syncScroll ? "滚动同步：开" : "滚动同步：关"}
-          active={syncScroll}
-          onClick={() => useAppStore.getState().toggleSyncScroll()}
-        />
+          <ToolButton
+            icon="arrow-up-down"
+            label={syncScroll ? "滚动同步：开" : "滚动同步：关"}
+            active={syncScroll}
+            onClick={() => useAppStore.getState().toggleSyncScroll()}
+          />
       ) : null}
 
       <div className="flex-1" />

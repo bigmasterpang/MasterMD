@@ -5,7 +5,14 @@ import { useDialogStore } from "../../stores/dialogStore";
 import { useSettingsStore } from "../../stores/settingsStore";
 import { useUpdateStore } from "../../stores/updateStore";
 import type { AccentName, ThemeMode } from "../../types";
-import { MAX_FONT_SIZE, MIN_FONT_SIZE, MIN_AUTOSAVE_INTERVAL } from "../../utils/constants";
+import {
+  APP_NAME,
+  AUTHOR_NAME,
+  AUTHOR_NAME_CN,
+  MAX_FONT_SIZE,
+  MIN_FONT_SIZE,
+  MIN_AUTOSAVE_INTERVAL,
+} from "../../utils/constants";
 import { getVersion } from "@tauri-apps/api/app";
 
 const THEMES: Array<{ value: ThemeMode; label: string }> = [
@@ -213,13 +220,26 @@ export function SettingsModal() {
             </button>
           </Row>
           <div className="text-[11px] text-faint">
-            版本来源：github.com/bigmasterpang/MasterMD
+            版本来源：软件中心 · github.com/bigmasterpang/MasterMD
             {updateState.info?.hasUpdate
               ? ` · 发现新版本 ${updateState.info.latest}`
               : updateState.info
                 ? " · 已是最新版本"
                 : ""}
           </div>
+        </Section>
+
+        <Section title="关于">
+          <Row label={`${APP_NAME} · 作者 ${AUTHOR_NAME}（${AUTHOR_NAME_CN}）`}>
+            <button
+              type="button"
+              onClick={() => useDialogStore.getState().setAboutVisible(true)}
+              className="flex items-center gap-1.5 rounded-md border border-line bg-input px-2.5 py-1 text-[12px] text-fg hover:bg-hover"
+            >
+              <Icon name="info" size={13} />
+              关于 {APP_NAME}
+            </button>
+          </Row>
         </Section>
       </div>
     </Modal>

@@ -11,7 +11,7 @@ export const DEFAULT_SETTINGS: Settings = {
   tabSize: 2,
   wordWrap: true,
   showLineNumbers: true,
-  autoSave: false,
+  autoSave: true,
   autoSaveInterval: 30,
   recentFilesLimit: 10,
   shortcuts: { ...DEFAULT_SHORTCUTS },

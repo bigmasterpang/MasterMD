@@ -157,7 +157,7 @@ export function SearchBar() {
       {replaceVisible ? (
         <div className="mt-1.5 flex items-center gap-1">
           <span className="w-6 shrink-0" />
-          <Icon name="refresh" size={14} className="shrink-0 text-faint" />
+          <Icon name="replace" size={14} className="shrink-0 text-faint" />
           <input
             value={replacement}
             onChange={(event) =>

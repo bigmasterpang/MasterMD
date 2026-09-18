@@ -55,9 +55,11 @@ interface DialogStore {
   form: FormState;
   settingsVisible: boolean;
   shortcutsVisible: boolean;
+  aboutVisible: boolean;
 
   setSettingsVisible: (visible: boolean) => void;
   setShortcutsVisible: (visible: boolean) => void;
+  setAboutVisible: (visible: boolean) => void;
   setUnsaved: (patch: Partial<UnsavedState>) => void;
   setConflict: (patch: Partial<ConflictState>) => void;
   setConfirm: (patch: Partial<ConfirmState>) => void;
@@ -73,9 +75,11 @@ export const useDialogStore = create<DialogStore>((set) => ({
   form: { open: false, title: "", fields: [], confirmText: "插入", resolve: null },
   settingsVisible: false,
   shortcutsVisible: false,
+  aboutVisible: false,
 
   setSettingsVisible: (visible) => set({ settingsVisible: visible }),
   setShortcutsVisible: (visible) => set({ shortcutsVisible: visible }),
+  setAboutVisible: (visible) => set({ aboutVisible: visible }),
   setUnsaved: (patch) => set((s) => ({ unsaved: { ...s.unsaved, ...patch } })),
   setConflict: (patch) => set((s) => ({ conflict: { ...s.conflict, ...patch } })),
   setConfirm: (patch) => set((s) => ({ confirm: { ...s.confirm, ...patch } })),

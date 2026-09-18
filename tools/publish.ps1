@@ -21,22 +21,23 @@ if ($Build) {
     }
 }
 
-# 2. Locate the NSIS installer
-if (-not $FilePath) {
-    $bundleDir = Join-Path $projectRoot "src-tauri\target\release\bundle\nsis"
-    $candidate = Get-ChildItem -LiteralPath $bundleDir -Filter "mastermd_*_x64-setup.exe" -ErrorAction SilentlyContinue |
-        Sort-Object LastWriteTime -Descending | Select-Object -First 1
-    if (-not $candidate) { throw "Installer not found in $bundleDir, run with -Build first" }
-    $FilePath = $candidate.FullName
-}
-
-# 3. Read version from tauri.conf.json when not provided
+# 2. Locate the NSIS installer (name must match the version exactly)
 if (-not $Version) {
     $confPath = Join-Path $projectRoot "src-tauri\tauri.conf.json"
     $conf = Get-Content -LiteralPath $confPath -Raw -Encoding UTF8 | ConvertFrom-Json
     $Version = $conf.version
 }
 if (-not $Version) { throw "Version could not be determined" }
+
+if (-not $FilePath) {
+    $bundleDir = Join-Path $projectRoot "src-tauri\target\release\bundle\nsis"
+    $expected = Join-Path $bundleDir "MasterMD_${Version}_x64-setup.exe"
+    if (-not (Test-Path -LiteralPath $expected)) {
+        throw "Installer not found: $expected (run with -Build first)"
+    }
+    $FilePath = $expected
+}
+Write-Host "Artifact: $(Split-Path $FilePath -Leaf)" -ForegroundColor Cyan
 
 # 4. Release notes: file > git log > default
 if (-not $ReleaseNotes -and $NotesFilePath -and (Test-Path -LiteralPath $NotesFilePath)) {

@@ -34,6 +34,7 @@ import { useUpdateStore } from "./stores/updateStore";
 import { askUnsaved } from "./stores/dialogStore";
 import { UpdateDialog } from "./components/Dialogs/UpdateDialog";
 import { ShortcutsDialog } from "./components/Dialogs/ShortcutsDialog";
+import { AboutDialog } from "./components/Dialogs/AboutDialog";
 import { useSettingsStore } from "./stores/settingsStore";
 import {
   displayName,
@@ -249,6 +250,7 @@ export default function App() {
       <FormDialog />
       <UpdateDialog />
       <ShortcutsDialog />
+      <AboutDialog />
     </div>
   );
 }

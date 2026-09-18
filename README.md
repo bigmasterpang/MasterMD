@@ -1,8 +1,9 @@
-# mastermd — Windows Markdown 查看与简易编辑器
+# MasterMD — Windows Markdown 查看与编辑器
 
-基于 **Tauri 2 + Rust + React 19 + TypeScript + Vite + TailwindCSS 4 + CodeMirror 6** 的 Windows 桌面 Markdown 查看器与轻量编辑器。安装包体积小、冷启动快、界面现代，支持深色/浅色主题。
+> 作者：**Master Wang（王大师）** · Master 系列软件
+> 仓库：<https://github.com/bigmasterpang/MasterMD>
 
-仓库：<https://github.com/bigmasterpang/MasterMD>
+基于 **Tauri 2 + Rust + React 19 + TypeScript + Vite + TailwindCSS 4 + CodeMirror 6** 的 Windows 桌面 Markdown 查看器与轻量编辑器。安装包约 4.2 MB，冷启动 < 0.4 秒，空闲内存约 30 MB。
 
 ## 功能一览
 
@@ -154,8 +155,8 @@ pnpm build            # 仅构建前端（输出到 dist/）
 ```bash
 pnpm tauri build              # 生成 NSIS 安装包
 # 产物：
-#   src-tauri/target/release/mastermd.exe
-#   src-tauri/target/release/bundle/nsis/mastermd_0.3.0_x64-setup.exe
+#   src-tauri/target/release/MasterMD.exe
+#   src-tauri/target/release/bundle/nsis/MasterMD_0.6.0_x64-setup.exe
 ```
 
 打包配置要点（`src-tauri/tauri.conf.json`）：
@@ -247,6 +248,7 @@ src-tauri/src/
 - 未实现单实例运行：通过文件关联连续双击多个文件会打开多个窗口。
 - 一次只能拖入并打开一个文件（拖入多个时仅打开第一个）。
 - Rust 端最近文件上限固定为 10，设置中的「最近文件上限」只影响界面显示数量。
+- 应用内更新仅支持软件中心分发（GitHub Release 仅跳转发布页）。
 
 ## 验收自测清单
 
@@ -262,7 +264,7 @@ src-tauri/src/
 | 提示块 / 上下标 / 表格 / 列表快捷编辑 | ✅ |
 | 导出 HTML / PNG / DOCX / PDF | ✅ |
 | 原始字数 / 预览字数统计 | ✅ |
-| 版本更新检查（GitHub Release） | ✅ |
+| 版本更新检查（软件中心 + 应用内下载安装） | ✅ |
 | 最近文件持久化 | ✅ |
 | 拖放打开 | ✅ |
 | 代码块语法高亮 | ✅ |
