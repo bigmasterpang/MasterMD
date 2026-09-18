@@ -33,7 +33,7 @@ const QUOTE_RE = /^(\s*)>\s?/;
 
 /** 取得选区覆盖的所有行（至少一行） */
 function selectedLines(state: EditorState): Line[] {
-  const sel = state.selection.main;
+  const sel = safeSelection(state);
   const start = state.doc.lineAt(sel.from);
   const endLine = state.doc.lineAt(sel.to);
   const lines: Line[] = [];
@@ -43,8 +43,50 @@ function selectedLines(state: EditorState): Line[] {
 
 /** 选区文本（用于替换） */
 function selectionRange(state: EditorState): { from: number; to: number } {
+  return safeSelection(state);
+}
+
+/**
+ * 取安全的变更区间：始终 from <= to 且落在文档范围内。
+ * 极端情况下（选区与文档不同步）CodeMirror 会因 from > to 抛 RangeError，
+ * 统一在这里兜底，保证任何命令都不会因此中断。
+ */
+function clampChange(
+  state: EditorState,
+  from: number,
+  to: number,
+): { from: number; to: number } {
+  const length = state.doc.length;
+  const low = Math.max(0, Math.min(from, to, length));
+  const high = Math.max(low, Math.min(Math.max(from, to), length));
+  return { from: low, to: high };
+}
+
+/** 规范化当前选区 */
+function safeSelection(state: EditorState): { from: number; to: number } {
   const sel = state.selection.main;
-  return { from: sel.from, to: sel.to };
+  return clampChange(state, sel.from, sel.to);
+}
+
+/** 批量修正变更列表中的越界 / 反向区间 */
+function clampChanges(state: EditorState, changes: ChangeSpec[]): ChangeSpec[] {
+  return changes.map((spec) => {
+    if (!spec || typeof spec !== "object" || !("from" in spec)) return spec;
+    const item = spec as { from?: number; to?: number };
+    const from = typeof item.from === "number" ? item.from : 0;
+    const to = typeof item.to === "number" ? item.to : from;
+    return { ...item, ...clampChange(state, from, to) } as ChangeSpec;
+  });
+}
+
+/** 单个变更的修正（返回 { from, to } + 原始 insert 字段） */
+function safeChange(
+  state: EditorState,
+  from: number,
+  to: number,
+  insert: string,
+): ChangeSpec {
+  return { ...clampChange(state, from, to), insert };
 }
 
 /** 去掉行首的列表 / 引用标记，返回缩进 + 内容 */
@@ -71,7 +113,7 @@ function isQuoteLine(text: string): boolean {
 
 function applyChanges(view: EditorView, changes: ChangeSpec[]): void {
   if (changes.length === 0) return;
-  view.dispatch({ changes });
+  view.dispatch({ changes: clampChanges(view.state, changes) });
 }
 
 /* ------------------------------ 内联格式 ------------------------------ */
@@ -80,12 +122,12 @@ function applyChanges(view: EditorView, changes: ChangeSpec[]): void {
 export function wrapSelection(before: string, after = before, placeholder = ""): void {
   withEditorView((view) => {
     const { state } = view;
-    const range = state.selection.main;
+    const range = safeSelection(state);
     const selected = state.sliceDoc(range.from, range.to);
     const text = selected || placeholder;
     const insert = `${before}${text}${after}`;
     view.dispatch({
-      changes: { from: range.from, to: range.to, insert },
+      changes: safeChange(state, range.from, range.to, insert),
       selection: {
         anchor: range.from + before.length,
         head: range.from + before.length + text.length,
@@ -99,9 +141,10 @@ export function wrapSelection(before: string, after = before, placeholder = ""):
 /** 插入文本（替换选区） */
 export function insertText(text: string): void {
   withEditorView((view) => {
-    const range = view.state.selection.main;
+    const state = view.state;
+    const range = safeSelection(state);
     view.dispatch({
-      changes: { from: range.from, to: range.to, insert: text },
+      changes: safeChange(state, range.from, range.to, text),
       selection: { anchor: range.from + text.length },
       scrollIntoView: true,
     });
@@ -113,13 +156,13 @@ export function insertText(text: string): void {
 export function insertBlock(text: string): void {
   withEditorView((view) => {
     const { state } = view;
-    const range = state.selection.main;
+    const range = safeSelection(state);
     const lineStart = state.doc.lineAt(range.from).from;
     const before = state.sliceDoc(Math.max(0, lineStart - 2), lineStart);
     const prefix = lineStart === 0 || before.endsWith("\n\n") ? "" : "\n";
     const insert = `${prefix}${text}\n`;
     view.dispatch({
-      changes: { from: range.from, to: range.to, insert },
+      changes: safeChange(state, range.from, range.to, insert),
       selection: { anchor: range.from + insert.length },
       scrollIntoView: true,
     });
@@ -177,7 +220,12 @@ export function setHeading(level: number): void {
   });
 }
 
-/** 整体提升 / 降低标题级别 */
+/**
+ * 整体提升 / 降低标题级别。
+ * 级别 0 表示普通段落：
+ * - 提升：段落 → H6，H6 → H5 … H2 → H1（H1 已是最高，保持不变）
+ * - 降低：H1 → H2 … H6 → 普通段落（段落无法再降）
+ */
 export function shiftHeading(delta: number): void {
   withEditorView((view) => {
     const { state } = view;
@@ -185,9 +233,18 @@ export function shiftHeading(delta: number): void {
     for (const line of selectedLines(state)) {
       const text = line.text;
       const existing = HEADING_RE.exec(text);
-      if (!existing) continue;
-      const level = Math.max(1, Math.min(6, existing[1].length + delta));
-      const next = `${"#".repeat(level)} ${text.slice(existing[0].length)}`;
+      const current = existing ? existing[1].length : 0;
+      const body = existing ? text.slice(existing[0].length) : text;
+
+      let level: number;
+      if (delta < 0) {
+        level = current === 0 ? 6 : Math.max(1, current - 1);
+      } else {
+        if (current === 0) continue; // 段落无法再降级
+        level = current >= 6 ? 0 : current + 1;
+      }
+
+      const next = level === 0 ? body : `${"#".repeat(level)} ${body}`;
       if (next !== text) changes.push({ from: line.from, to: line.to, insert: next });
     }
     applyChanges(view, changes);
@@ -254,14 +311,14 @@ export function toggleQuote(): void {
 export function insertCallout(type: CalloutType = "note"): void {
   withEditorView((view) => {
     const { state } = view;
-    const range = state.selection.main;
+    const range = safeSelection(state);
     const selected = state.sliceDoc(range.from, range.to);
     const label = type.toUpperCase();
 
     if (!selected) {
       const template = `> [!${label}]\n> 在此输入内容\n`;
       view.dispatch({
-        changes: { from: range.from, to: range.to, insert: template },
+        changes: safeChange(state, range.from, range.to, template),
         selection: {
           anchor: range.from + `> [!${label}]\n> `.length,
           head: range.from + `> [!${label}]\n> `.length + 6,
@@ -278,7 +335,7 @@ export function insertCallout(type: CalloutType = "note"): void {
         ? `> [!${label}] ${lines[0]}`
         : `> [!${label}]\n${lines.map((l) => `> ${l}`).join("\n")}`;
     view.dispatch({
-      changes: { from: range.from, to: range.to, insert: body },
+      changes: safeChange(state, range.from, range.to, body),
       selection: { anchor: range.from + body.length },
       scrollIntoView: true,
     });
@@ -308,12 +365,12 @@ export function insertHorizontalRule(): void {
 export function insertCodeBlock(lang = ""): void {
   withEditorView((view) => {
     const { state } = view;
-    const range = state.selection.main;
+    const range = safeSelection(state);
     const selected = state.sliceDoc(range.from, range.to) || "代码";
     const fence = "```";
     const block = `${fence}${lang}\n${selected}\n${fence}`;
     view.dispatch({
-      changes: { from: range.from, to: range.to, insert: block },
+      changes: safeChange(state, range.from, range.to, block),
       selection: {
         anchor: range.from + fence.length + lang.length + 1,
         head: range.from + fence.length + lang.length + 1 + selected.length,
@@ -359,7 +416,7 @@ export function insertToc(): void {
 export function moveLines(direction: -1 | 1): void {
   withEditorView((view) => {
     const { state } = view;
-    const sel = state.selection.main;
+    const sel = safeSelection(state);
     const startLine = state.doc.lineAt(sel.from);
     const endLine = state.doc.lineAt(sel.to);
 
@@ -369,12 +426,11 @@ export function moveLines(direction: -1 | 1): void {
       const block = state.sliceDoc(startLine.from, endLine.to);
       const shift = prev.length + 1;
       view.dispatch({
-        changes: {
-          from: prev.from,
-          to: endLine.to,
-          insert: `${block}\n${prev.text}`,
-        },
-        selection: EditorSelection.range(sel.from - shift, sel.to - shift),
+        changes: safeChange(state, prev.from, endLine.to, `${block}\n${prev.text}`),
+        selection: EditorSelection.range(
+          Math.max(0, sel.from - shift),
+          Math.max(0, sel.to - shift),
+        ),
         scrollIntoView: true,
       });
       return;
@@ -385,11 +441,7 @@ export function moveLines(direction: -1 | 1): void {
     const block = state.sliceDoc(startLine.from, endLine.to);
     const shift = next.length + 1;
     view.dispatch({
-      changes: {
-        from: startLine.from,
-        to: next.to,
-        insert: `${next.text}\n${block}`,
-      },
+      changes: safeChange(state, startLine.from, next.to, `${next.text}\n${block}`),
       selection: EditorSelection.range(sel.from + shift, sel.to + shift),
       scrollIntoView: true,
     });
@@ -400,13 +452,13 @@ export function moveLines(direction: -1 | 1): void {
 export function duplicateLines(): void {
   withEditorView((view) => {
     const { state } = view;
-    const sel = state.selection.main;
+    const sel = safeSelection(state);
     const startLine = state.doc.lineAt(sel.from);
     const endLine = state.doc.lineAt(sel.to);
     const block = state.sliceDoc(startLine.from, endLine.to);
     const insert = `\n${block}`;
     view.dispatch({
-      changes: { from: endLine.to, to: endLine.to, insert },
+      changes: safeChange(state, endLine.to, endLine.to, insert),
       selection: EditorSelection.range(sel.from, sel.to),
       scrollIntoView: true,
     });
@@ -417,7 +469,7 @@ export function duplicateLines(): void {
 export function deleteLines(): void {
   withEditorView((view) => {
     const { state } = view;
-    const sel = state.selection.main;
+    const sel = safeSelection(state);
     const startLine = state.doc.lineAt(sel.from);
     const endLine = state.doc.lineAt(sel.to);
     let from = startLine.from;
@@ -425,7 +477,7 @@ export function deleteLines(): void {
     if (to < state.doc.length) to += 1;
     else if (from > 0) from -= 1;
     view.dispatch({
-      changes: { from, to, insert: "" },
+      changes: safeChange(state, from, to, ""),
       selection: { anchor: Math.min(from, state.doc.length) },
       scrollIntoView: true,
     });
@@ -475,7 +527,7 @@ export function transformCase(kind: "upper" | "lower" | "title"): void {
         `${first.toUpperCase()}${rest}`,
       );
     view.dispatch({
-      changes: { from: range.from, to: range.to, insert: next },
+      changes: safeChange(state, range.from, range.to, next),
       selection: { anchor: range.from, head: range.from + next.length },
     });
     view.focus();
@@ -506,13 +558,13 @@ export function scrollToLine(line: number): void {
 export function insertMath(display: boolean): void {
   withEditorView((view) => {
     const { state } = view;
-    const range = state.selection.main;
+    const range = safeSelection(state);
     const selected = state.sliceDoc(range.from, range.to).trim();
     if (display) {
       const body = selected || "\\int_{0}^{\\infty} e^{-x^2}\\,dx = \\frac{\\sqrt{\\pi}}{2}";
       const block = `$$\n${body}\n$$`;
       view.dispatch({
-        changes: { from: range.from, to: range.to, insert: block },
+        changes: safeChange(state, range.from, range.to, block),
         selection: {
           anchor: range.from + 3,
           head: range.from + 3 + body.length,
@@ -523,7 +575,7 @@ export function insertMath(display: boolean): void {
       const body = selected || "E = mc^2";
       const inline = `$${body}$`;
       view.dispatch({
-        changes: { from: range.from, to: range.to, insert: inline },
+        changes: safeChange(state, range.from, range.to, inline),
         selection: {
           anchor: range.from + 1,
           head: range.from + 1 + body.length,
@@ -548,13 +600,13 @@ export function insertMermaid(): void {
   ].join("\n");
   withEditorView((view) => {
     const { state } = view;
-    const range = state.selection.main;
+    const range = safeSelection(state);
     const lineStart = state.doc.lineAt(range.from).from;
     const before = state.sliceDoc(Math.max(0, lineStart - 2), lineStart);
     const prefix = lineStart === 0 || before.endsWith("\n\n") ? "" : "\n";
     const insert = `${prefix}${template}\n`;
     view.dispatch({
-      changes: { from: range.from, to: range.to, insert },
+      changes: safeChange(state, range.from, range.to, insert),
       selection: { anchor: range.from + insert.length },
       scrollIntoView: true,
     });
@@ -579,9 +631,10 @@ export function insertMarkdownImage(alt: string, src: string): void {
 /** 用片段替换当前选区（无选区则插入到光标处） */
 function insertInlineSnippet(snippet: string): void {
   withEditorView((view) => {
-    const range = view.state.selection.main;
+    const state = view.state;
+    const range = safeSelection(state);
     view.dispatch({
-      changes: { from: range.from, to: range.to, insert: snippet },
+      changes: safeChange(state, range.from, range.to, snippet),
       selection: { anchor: range.from + snippet.length },
       scrollIntoView: true,
     });
@@ -605,7 +658,9 @@ export function toggleTaskOnLine(lineIndex: number): void {
   if (view && state.viewMode !== "preview") {
     // 源码编辑时走 CodeMirror 事务，保留撤销历史
     const line = view.state.doc.line(lineIndex + 1);
-    view.dispatch({ changes: { from: line.from, to: line.to, insert: next } });
+    view.dispatch({
+      changes: safeChange(view.state, line.from, line.to, next),
+    });
     return;
   }
   lines[lineIndex] = next;

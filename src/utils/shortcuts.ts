@@ -102,3 +102,72 @@ export function findConflict(
   }
   return null;
 }
+
+export interface ShortcutReferenceGroup {
+  title: string;
+  items: Array<{ keys: string; label: string; configurable?: boolean }>;
+}
+
+/** 应用内「全部快捷键」参考表（设置面板展示） */
+export const SHORTCUT_REFERENCE: ShortcutReferenceGroup[] = [
+  {
+    title: "文件",
+    items: [
+      { keys: "Ctrl+O", label: "打开文件", configurable: true },
+      { keys: "Ctrl+S", label: "保存", configurable: true },
+      { keys: "Ctrl+Shift+S", label: "另存为", configurable: true },
+      { keys: "Ctrl+N", label: "新建文档", configurable: true },
+      { keys: "Ctrl+W", label: "关闭当前标签", configurable: true },
+    ],
+  },
+  {
+    title: "标题与文本格式",
+    items: [
+      { keys: "Ctrl+1 … Ctrl+6", label: "设置为 H1–H6 标题" },
+      { keys: "Ctrl+0", label: "取消标题（变回普通段落）" },
+      { keys: "Ctrl+Alt+↑ / Ctrl+Alt+↓", label: "标题提升 / 降低一级" },
+      { keys: "Ctrl+B / Ctrl+I", label: "粗体 / 斜体" },
+      { keys: "Ctrl+K", label: "插入链接（弹窗填写）" },
+      { keys: "Ctrl+`", label: "行内代码" },
+      { keys: "Alt+Shift+5", label: "删除线" },
+      { keys: "Alt+Shift+= / Alt+Shift+-", label: "上标 / 下标" },
+    ],
+  },
+  {
+    title: "块级结构",
+    items: [
+      { keys: "Ctrl+Shift+7 / 8 / 9", label: "有序 / 无序 / 任务列表" },
+      { keys: "Ctrl+Shift+Q", label: "引用块" },
+      { keys: "Ctrl+Shift+L", label: "提示块（NOTE）" },
+      { keys: "Ctrl+Shift+C", label: "代码块" },
+      { keys: "Ctrl+Shift+T", label: "表格 3×3" },
+      { keys: "Ctrl+Shift+H", label: "水平分割线" },
+      { keys: "Ctrl+Shift+I", label: "插入图片（弹窗填写）" },
+      { keys: "Ctrl+Shift+O", label: "插入目录 (TOC)" },
+    ],
+  },
+  {
+    title: "行操作",
+    items: [
+      { keys: "Alt+↑ / Alt+↓", label: "上移 / 下移当前行" },
+      { keys: "Shift+Alt+↑ / Shift+Alt+↓", label: "复制当前行" },
+      { keys: "Ctrl+Shift+D", label: "复制当前行（备用）" },
+      { keys: "Ctrl+Shift+K", label: "删除当前行" },
+    ],
+  },
+  {
+    title: "视图与查找",
+    items: [
+      { keys: "Ctrl+E", label: "切换视图模式（预览/源码/分屏）", configurable: true },
+      { keys: "Ctrl+F", label: "查找", configurable: true },
+      { keys: "Ctrl+H", label: "查找并替换", configurable: true },
+      { keys: "F3 / Shift+F3", label: "查找下一个 / 上一个" },
+      { keys: "Enter / Shift+Enter", label: "（查找框内）下一个 / 上一个" },
+      { keys: "Ctrl+Tab / Ctrl+Shift+Tab", label: "切换到下一个 / 上一个标签页" },
+      { keys: "Ctrl+= / Ctrl+-", label: "字号增大 / 减小" },
+      { keys: "Ctrl+滚轮", label: "缩放字号" },
+      { keys: "Ctrl+,", label: "打开设置", configurable: true },
+      { keys: "Esc", label: "关闭搜索栏 / 弹窗" },
+    ],
+  },
+];

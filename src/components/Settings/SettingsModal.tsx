@@ -8,6 +8,7 @@ import type { AccentName, ShortcutId, ThemeMode } from "../../types";
 import {
   SHORTCUT_IDS,
   SHORTCUT_LABELS,
+  SHORTCUT_REFERENCE,
   eventToShortcut,
   findConflict,
 } from "../../utils/shortcuts";
@@ -240,6 +241,34 @@ export function SettingsModal() {
                 >
                   {capturing === id ? "按下按键…" : settings.shortcuts[id]}
                 </button>
+              </div>
+            ))}
+          </div>
+        </Section>
+
+        <Section title="全部快捷键">
+          <div className="mb-2 text-[11px] text-faint">
+            带「可自定义」标记的项可在上方修改；其余为固定快捷键（源码 / 分屏模式生效）
+          </div>
+          <div className="space-y-3">
+            {SHORTCUT_REFERENCE.map((group) => (
+              <div key={group.title}>
+                <div className="mb-1 text-[11px] font-semibold text-muted">{group.title}</div>
+                <div className="grid grid-cols-1 gap-x-6 gap-y-1 sm:grid-cols-2">
+                  {group.items.map((item) => (
+                    <div key={item.keys} className="flex items-baseline justify-between gap-2">
+                      <span className="truncate text-[12px] text-muted" title={item.label}>
+                        {item.label}
+                      </span>
+                      <span className="shrink-0 font-mono text-[11px] text-fg">
+                        {item.keys}
+                        {item.configurable ? (
+                          <span className="ml-1 text-[10px] text-accent">可自定义</span>
+                        ) : null}
+                      </span>
+                    </div>
+                  ))}
+                </div>
               </div>
             ))}
           </div>

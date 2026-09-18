@@ -96,13 +96,27 @@ export function useKeyboardShortcuts(): void {
     };
 
     const handler = (event: KeyboardEvent) => {
+      try {
+        handleKey(event);
+      } catch (error) {
+        // 单个快捷键异常不应影响其它功能
+        console.error("[mastermd] 快捷键处理失败", event.key, error);
+      }
+    };
+
+    const handleKey = (event: KeyboardEvent) => {
       const mod = event.ctrlKey || event.metaKey;
       const key = event.key.toLowerCase();
+      const code = event.code;
       const target = event.target as HTMLElement | null;
+      // 注意：CodeMirror 编辑区也是 contenteditable，不能当作"输入框"排除，
+      // 否则在编辑器中按 Ctrl+B/I/K 会被直接吞掉。
+      const inCodeMirror = Boolean(target?.closest?.(".cm-editor"));
       const inInput =
-        target?.tagName === "INPUT" ||
-        target?.tagName === "TEXTAREA" ||
-        target?.isContentEditable === true;
+        !inCodeMirror &&
+        (target?.tagName === "INPUT" ||
+          target?.tagName === "TEXTAREA" ||
+          target?.isContentEditable === true);
 
       if (!mod) {
         if (key === "escape") {
@@ -143,7 +157,7 @@ export function useKeyboardShortcuts(): void {
         return;
       }
 
-      // 输入框内不劫持格式快捷键
+      // 输入框内不劫持格式快捷键（编辑器除外）
       if (inInput && ["b", "i", "k", "`"].includes(key)) return;
 
       const shortcuts = useSettingsStore.getState().shortcuts;
@@ -168,6 +182,43 @@ export function useKeyboardShortcuts(): void {
         event.preventDefault();
         shiftHeading(event.key === "ArrowUp" ? -1 : 1);
         return;
+      }
+      // 上标 / 下标：Alt+Shift+= 与 Alt+Shift+-
+      // （Shift 会改变 event.key，例如 = 变 +、- 变 _，所以用 code 判断）
+      if (editable && event.altKey && event.shiftKey) {
+        if (code === "Equal") {
+          event.preventDefault();
+          toggleSuperscript();
+          return;
+        }
+        if (code === "Minus") {
+          event.preventDefault();
+          toggleSubscript();
+          return;
+        }
+        if (code === "Digit5") {
+          event.preventDefault();
+          toggleStrikethrough();
+          return;
+        }
+      }
+      // 列表：Ctrl+Shift+7/8/9（同样受 Shift 影响 event.key，用 code 判断）
+      if (editable && !event.altKey && event.shiftKey) {
+        if (code === "Digit7") {
+          event.preventDefault();
+          toggleList("ordered");
+          return;
+        }
+        if (code === "Digit8") {
+          event.preventDefault();
+          toggleList("bullet");
+          return;
+        }
+        if (code === "Digit9") {
+          event.preventDefault();
+          toggleList("task");
+          return;
+        }
       }
 
       switch (key) {
@@ -212,36 +263,14 @@ export function useKeyboardShortcuts(): void {
         case "=":
         case "+": {
           event.preventDefault();
-          if (event.altKey && event.shiftKey) {
-            if (editable) toggleSuperscript();
-            break;
-          }
           const { fontSize, set } = useSettingsStore.getState();
           set("fontSize", Math.min(24, fontSize + 1));
           break;
         }
         case "-": {
           event.preventDefault();
-          if (event.altKey && event.shiftKey) {
-            if (editable) toggleSubscript();
-            break;
-          }
           const { fontSize, set } = useSettingsStore.getState();
           set("fontSize", Math.max(11, fontSize - 1));
-          break;
-        }
-        case "5": {
-          if (!(event.altKey && event.shiftKey) || !editable) break;
-          event.preventDefault();
-          toggleStrikethrough();
-          break;
-        }
-        case "7":
-        case "8":
-        case "9": {
-          if (!event.shiftKey || !editable) break;
-          event.preventDefault();
-          toggleList(key === "7" ? "ordered" : key === "8" ? "bullet" : "task");
           break;
         }
         case "q": {
