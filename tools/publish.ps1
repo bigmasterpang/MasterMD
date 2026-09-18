@@ -3,6 +3,8 @@ param(
     [string]$Version = "",
     [string]$ReleaseNotes = "",
     [string]$NotesFilePath = "",
+    [ValidateSet("portable", "installer")]
+    [string]$Mode = "portable",
     [switch]$Build
 )
 
@@ -21,7 +23,7 @@ if ($Build) {
     }
 }
 
-# 2. Locate the NSIS installer (name must match the version exactly)
+# 2. Read version from tauri.conf.json when not provided
 if (-not $Version) {
     $confPath = Join-Path $projectRoot "src-tauri\tauri.conf.json"
     $conf = Get-Content -LiteralPath $confPath -Raw -Encoding UTF8 | ConvertFrom-Json
@@ -29,15 +31,29 @@ if (-not $Version) {
 }
 if (-not $Version) { throw "Version could not be determined" }
 
+$releaseDir = Join-Path $projectRoot "src-tauri\target\release"
+$bundleDir = Join-Path $releaseDir "bundle\nsis"
+
+# 3. Locate the artifact
 if (-not $FilePath) {
-    $bundleDir = Join-Path $projectRoot "src-tauri\target\release\bundle\nsis"
-    $expected = Join-Path $bundleDir "MasterMD_${Version}_x64-setup.exe"
-    if (-not (Test-Path -LiteralPath $expected)) {
-        throw "Installer not found: $expected (run with -Build first)"
+    if ($Mode -eq "portable") {
+        # Portable single-file build: app frontend is embedded in the exe
+        $built = Join-Path $releaseDir "MasterMD.exe"
+        if (-not (Test-Path -LiteralPath $built)) {
+            throw "Portable binary not found: $built (run with -Build first)"
+        }
+        $target = Join-Path $releaseDir "MasterMD_${Version}_x64.exe"
+        Copy-Item -LiteralPath $built -Destination $target -Force
+        $FilePath = $target
+    } else {
+        $target = Join-Path $bundleDir "MasterMD_${Version}_x64-setup.exe"
+        if (-not (Test-Path -LiteralPath $target)) {
+            throw "Installer not found: $target (run with -Build first)"
+        }
+        $FilePath = $target
     }
-    $FilePath = $expected
 }
-Write-Host "Artifact: $(Split-Path $FilePath -Leaf)" -ForegroundColor Cyan
+Write-Host "Artifact: $(Split-Path $FilePath -Leaf) ($([math]::Round((Get-Item -LiteralPath $FilePath).Length / 1MB, 2)) MB)" -ForegroundColor Cyan
 
 # 4. Release notes: file > git log > default
 if (-not $ReleaseNotes -and $NotesFilePath -and (Test-Path -LiteralPath $NotesFilePath)) {

@@ -35,6 +35,8 @@ interface UpdateState {
   showDialog: () => void;
   hideDialog: () => void;
   downloadAndInstall: () => Promise<void>;
+  /** 便携版：替换并重启 */
+  applyPortableUpdate: () => Promise<void>;
   runInstaller: () => Promise<void>;
   resetDownload: () => void;
 }
@@ -118,12 +120,31 @@ export const useUpdateStore = create<UpdateState>((set, get) => ({
         downloadedPath: result.path,
       });
 
-      // 下载完成立即拉起安装程序
-      await get().runInstaller();
+      // 便携版：直接替换当前程序并重启；安装包：拉起安装向导
+      const isInstaller = /setup\.exe$/i.test(info.filename ?? "");
+      if (isInstaller) {
+        await get().runInstaller();
+      } else {
+        await get().applyPortableUpdate();
+      }
     } catch (error) {
       set({ downloading: false, error: String(error) });
     } finally {
       unlisten();
+    }
+  },
+
+  /** 便携版自更新：替换 exe 后由新进程接管，当前进程退出 */
+  applyPortableUpdate: async () => {
+    const path = get().downloadedPath;
+    if (!path) return;
+    try {
+      await invoke("apply_update", { path });
+      set({ installed: true });
+      // 新版本已启动，关闭当前窗口
+      await invoke("confirm_close");
+    } catch (error) {
+      set({ error: String(error) });
     }
   },
 

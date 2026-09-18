@@ -24,6 +24,8 @@ export function UpdateDialog() {
 
   const canInstall = Boolean(info?.downloadUrl);
   const percent = Math.round(progress * 100);
+  /** 安装包走安装向导，便携版直接替换重启 */
+  const isInstaller = /setup\.exe$/i.test(info?.filename ?? "");
 
   const title = error
     ? "更新失败"
@@ -61,9 +63,18 @@ export function UpdateDialog() {
       >
         打开发布页面
       </Button>
-      <Button variant="primary" onClick={() => void useUpdateStore.getState().runInstaller()}>
-        {installed ? "再次运行安装包" : "运行安装包"}
-      </Button>
+      {isInstaller ? (
+        <Button variant="primary" onClick={() => void useUpdateStore.getState().runInstaller()}>
+          {installed ? "再次运行安装包" : "运行安装包"}
+        </Button>
+      ) : (
+        <Button
+          variant="primary"
+          onClick={() => void useUpdateStore.getState().applyPortableUpdate()}
+        >
+          重启完成更新
+        </Button>
+      )}
     </>
   ) : info?.hasUpdate ? (
     <>
@@ -122,22 +133,26 @@ export function UpdateDialog() {
               {formatSize(received)} / {formatSize(total, info?.humanSize)}
             </span>
           </div>
-          <div className="text-[11px] text-faint">下载完成后会自动校验 SHA-256 并启动安装程序</div>
+          <div className="text-[11px] text-faint">
+            下载完成后会自动校验 SHA-256，随后{isInstaller ? "启动安装向导" : "替换程序并重启"}
+          </div>
         </div>
       ) : downloadedPath ? (
         <div className="space-y-3">
           <div className="flex items-center gap-2">
             <Icon name="check" size={18} className="text-success" />
             <div>
-              安装包已下载并通过 SHA-256 校验
-              {installed ? "，安装程序已启动" : ""}
+              更新包已下载并通过 SHA-256 校验
+              {installed ? "，程序已更新" : ""}
             </div>
           </div>
           <div className="break-all rounded-md border border-line bg-panel p-2 text-[11px] text-muted">
             {downloadedPath}
           </div>
           <div className="text-[12px] text-muted">
-            请在弹出的安装向导中完成安装；安装程序会自动关闭 mastermd，完成后可重新打开。
+            {isInstaller
+              ? "请在弹出的安装向导中完成安装；安装程序会自动关闭 MasterMD，完成后可重新打开。"
+              : "点击「重启完成更新」会用新版本替换当前程序并自动重启，未保存内容可在重启后从会话恢复。"}
           </div>
         </div>
       ) : !info ? (

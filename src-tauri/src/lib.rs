@@ -49,6 +49,9 @@ pub fn run() {
             // 关闭 WebView2 自带快捷键，避免与应用的 Ctrl+F / Ctrl+P / F3 冲突
             #[cfg(windows)]
             commands::pdf::disable_browser_accelerators(&handle);
+            // 清理便携版自更新遗留的旧程序备份
+            #[cfg(windows)]
+            commands::update::cleanup_old_binary();
             let _ = &handle;
             Ok(())
         })
@@ -87,6 +90,8 @@ pub fn run() {
             commands::update::download_update,
             #[cfg(windows)]
             commands::update::run_installer,
+            #[cfg(windows)]
+            commands::update::apply_update,
             #[cfg(windows)]
             commands::update::reveal_in_explorer,
         ])

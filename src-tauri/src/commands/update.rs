@@ -571,7 +571,7 @@ pub async fn download_update(
     result
 }
 
-/// 运行下载好的安装包（NSIS），随后由用户完成安装
+/// 运行下载好的安装程序（NSIS 安装包模式）
 #[cfg(windows)]
 #[tauri::command]
 pub async fn run_installer(path: String) -> Result<(), String> {
@@ -582,6 +582,61 @@ pub async fn run_installer(path: String) -> Result<(), String> {
         .spawn()
         .map_err(|e| format!("启动安装包失败: {e}"))?;
     Ok(())
+}
+
+/// 便携版自更新：用下载好的新版本替换当前可执行文件并重启。
+/// Windows 允许重命名正在运行的 exe，因此流程为：
+/// 当前 exe → 改名为 .old → 新 exe 就位 → 启动新版本 → 前端退出。
+#[cfg(windows)]
+#[tauri::command]
+pub async fn apply_update(path: String) -> Result<(), String> {
+    let source = std::path::PathBuf::from(&path);
+    if !source.exists() {
+        return Err("更新文件不存在，请重新下载".to_string());
+    }
+
+    let current = std::env::current_exe().map_err(|e| format!("无法定位当前程序: {e}"))?;
+    let dir = current
+        .parent()
+        .ok_or_else(|| "无法确定程序所在目录".to_string())?
+        .to_path_buf();
+    let old = dir.join(format!(
+        "{}.old",
+        current
+            .file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_else(|| "MasterMD.exe".to_string())
+    ));
+
+    // 清理上一次更新留下的备份
+    let _ = std::fs::remove_file(&old);
+
+    std::fs::rename(&current, &old).map_err(|e| format!("替换程序失败（改名阶段）: {e}"))?;
+    if let Err(error) = std::fs::copy(&source, &current) {
+        // 回滚，避免程序不可用
+        let _ = std::fs::rename(&old, &current);
+        return Err(format!("替换程序失败（写入阶段）: {error}"));
+    }
+
+    std::process::Command::new(&current)
+        .spawn()
+        .map_err(|e| format!("启动新版本失败: {e}"))?;
+    Ok(())
+}
+
+/// 启动时清理上次更新遗留的 .old 备份
+#[cfg(windows)]
+pub fn cleanup_old_binary() {
+    let Ok(current) = std::env::current_exe() else {
+        return;
+    };
+    let name = current
+        .file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_else(|| "MasterMD.exe".to_string());
+    if let Some(dir) = current.parent() {
+        let _ = std::fs::remove_file(dir.join(format!("{name}.old")));
+    }
 }
 
 /// 打开安装包所在目录（辅助入口）
