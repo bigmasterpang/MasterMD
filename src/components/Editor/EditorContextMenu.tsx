@@ -15,7 +15,9 @@ import {
   insertToc,
   pasteFromClipboard,
   setHeading,
+  shiftHeading,
   toggleBold,
+  toggleHighlight,
   toggleInlineCode,
   toggleItalic,
   toggleList,
@@ -23,6 +25,7 @@ import {
   toggleStrikethrough,
   toggleSubscript,
   toggleSuperscript,
+  toggleUnderline,
   transformCase,
 } from "../../utils/editorCommands";
 import { promptInsert } from "../Toolbar/Toolbar";
@@ -34,7 +37,7 @@ interface Props {
   onClose: () => void;
 }
 
-/** 编辑器右键菜单：有选区时提供格式/转换操作，空白处提供插入操作 */
+/** 编辑器右键菜单：二级菜单分组，避免过长 */
 export function EditorContextMenu({ x, y, hasSelection, onClose }: Props) {
   const groups = useMemo<ContextMenuItem[][]>(() => {
     const clipboard: ContextMenuItem[] = [
@@ -62,49 +65,100 @@ export function EditorContextMenu({ x, y, hasSelection, onClose }: Props) {
       },
     ];
 
+    const formatSubmenu: ContextMenuItem[][] = [
+      [
+        { label: "加粗", hint: "Ctrl+B", icon: "bold", onClick: toggleBold },
+        { label: "斜体", hint: "Ctrl+I", icon: "italic", onClick: toggleItalic },
+        { label: "删除线", hint: "Alt+Shift+5", onClick: toggleStrikethrough },
+        { label: "高亮", hint: "Ctrl+Shift+M", onClick: toggleHighlight },
+        { label: "下划线", hint: "Alt+Shift+U", onClick: toggleUnderline },
+      ],
+      [
+        { label: "行内代码", hint: "Ctrl+`", icon: "code", onClick: toggleInlineCode },
+        { label: "上标", hint: "Alt+Shift+=", onClick: toggleSuperscript },
+        { label: "下标", hint: "Alt+Shift+-", onClick: toggleSubscript },
+      ],
+      [{ label: "清除格式", icon: "x", onClick: clearFormatting }],
+    ];
+
+    const insertSubmenu: ContextMenuItem[][] = [
+      [
+        {
+          label: "链接…",
+          hint: "Ctrl+K",
+          icon: "link",
+          onClick: () => void promptInsert("link"),
+        },
+        {
+          label: "图片…",
+          hint: "Ctrl+Shift+I",
+          icon: "image",
+          onClick: () => void promptInsert("image"),
+        },
+      ],
+      [
+        { label: "表格 3×3", hint: "Ctrl+Shift+T", icon: "columns", onClick: () => insertTable(3, 3) },
+        { label: "代码块", hint: "Ctrl+Shift+C", icon: "code", onClick: () => insertCodeBlock() },
+        { label: "分割线", hint: "Ctrl+Shift+H", icon: "minus", onClick: insertHorizontalRule },
+      ],
+      [
+        { label: "行内公式 $…$", onClick: () => insertMath(false) },
+        { label: "块级公式 $$…$$", onClick: () => insertMath(true) },
+        { label: "Mermaid 图表", icon: "columns", onClick: insertMermaid },
+      ],
+      [
+        { label: "日期时间", icon: "clock", onClick: insertDateTime },
+        { label: "目录 (TOC)", hint: "Ctrl+Shift+O", icon: "list", onClick: insertToc },
+      ],
+    ];
+
+    const paragraphSubmenu: ContextMenuItem[][] = [
+      [
+        { label: "标题 H1", hint: "Ctrl+1", onClick: () => setHeading(1) },
+        { label: "标题 H2", hint: "Ctrl+2", onClick: () => setHeading(2) },
+        { label: "标题 H3", hint: "Ctrl+3", onClick: () => setHeading(3) },
+        { label: "标题 H4", hint: "Ctrl+4", onClick: () => setHeading(4) },
+        { label: "正文", hint: "Ctrl+0", onClick: () => setHeading(0) },
+        { label: "提升一级", hint: "Ctrl+Alt+↑", onClick: () => shiftHeading(-1) },
+        { label: "降低一级", hint: "Ctrl+Alt+↓", onClick: () => shiftHeading(1) },
+      ],
+      [
+        { label: "无序列表", hint: "Ctrl+Shift+8", icon: "list", onClick: () => toggleList("bullet") },
+        { label: "有序列表", hint: "Ctrl+Shift+7", icon: "list", onClick: () => toggleList("ordered") },
+        { label: "任务列表", hint: "Ctrl+Shift+9", icon: "check", onClick: () => toggleList("task") },
+      ],
+      [
+        { label: "引用块", hint: "Ctrl+Shift+Q", onClick: toggleQuote },
+        { label: "提示块", hint: "Ctrl+Shift+L", onClick: () => insertCallout("note") },
+      ],
+    ];
+
+    const calloutSubmenu: ContextMenuItem[][] = [
+      [
+        { label: "提示 NOTE", onClick: () => insertCallout("note") },
+        { label: "技巧 TIP", onClick: () => insertCallout("tip") },
+        { label: "重要 IMPORTANT", onClick: () => insertCallout("important") },
+        { label: "警告 WARNING", onClick: () => insertCallout("warning") },
+        { label: "注意 CAUTION", onClick: () => insertCallout("caution") },
+      ],
+    ];
+
+    const transformSubmenu: ContextMenuItem[][] = [
+      [
+        { label: "转为大写", onClick: () => transformCase("upper") },
+        { label: "转为小写", onClick: () => transformCase("lower") },
+      ],
+    ];
+
     if (hasSelection) {
       return [
         clipboard,
         [
-          { label: "加粗", hint: "Ctrl+B", icon: "bold", onClick: toggleBold },
-          { label: "斜体", hint: "Ctrl+I", icon: "italic", onClick: toggleItalic },
-          { label: "删除线", hint: "Alt+Shift+5", onClick: toggleStrikethrough },
-          { label: "行内代码", hint: "Ctrl+`", icon: "code", onClick: toggleInlineCode },
-          { label: "上标", onClick: toggleSuperscript },
-          { label: "下标", onClick: toggleSubscript },
-          { label: "清除格式", icon: "x", onClick: clearFormatting },
-        ],
-        [
-          {
-            label: "插入链接…",
-            hint: "Ctrl+K",
-            icon: "link",
-            onClick: () => void promptInsert("link"),
-          },
-          {
-            label: "插入图片…",
-            hint: "Ctrl+Shift+I",
-            icon: "image",
-            onClick: () => void promptInsert("image"),
-          },
-        ],
-        [
-          { label: "标题 H1", hint: "Ctrl+1", onClick: () => setHeading(1) },
-          { label: "标题 H2", hint: "Ctrl+2", onClick: () => setHeading(2) },
-          { label: "标题 H3", hint: "Ctrl+3", onClick: () => setHeading(3) },
-          { label: "正文", hint: "Ctrl+0", onClick: () => setHeading(0) },
-        ],
-        [
-          { label: "无序列表", hint: "Ctrl+Shift+8", icon: "list", onClick: () => toggleList("bullet") },
-          { label: "有序列表", hint: "Ctrl+Shift+7", icon: "list", onClick: () => toggleList("ordered") },
-          { label: "任务列表", hint: "Ctrl+Shift+9", icon: "check", onClick: () => toggleList("task") },
-          { label: "引用块", hint: "Ctrl+Shift+Q", onClick: toggleQuote },
-          { label: "提示块", hint: "Ctrl+Shift+L", onClick: () => insertCallout("note") },
-          { label: "代码块", hint: "Ctrl+Shift+C", icon: "code", onClick: () => insertCodeBlock() },
-        ],
-        [
-          { label: "转为大写", onClick: () => transformCase("upper") },
-          { label: "转为小写", onClick: () => transformCase("lower") },
+          { label: "格式", icon: "bold", submenu: formatSubmenu },
+          { label: "段落与列表", icon: "list", submenu: paragraphSubmenu },
+          { label: "提示块", submenu: calloutSubmenu },
+          { label: "插入", icon: "plus", submenu: insertSubmenu },
+          { label: "大小写转换", submenu: transformSubmenu },
         ],
       ];
     }
@@ -112,28 +166,9 @@ export function EditorContextMenu({ x, y, hasSelection, onClose }: Props) {
     return [
       clipboard,
       [
-        { label: "插入表格 3×3", hint: "Ctrl+Shift+T", icon: "columns", onClick: () => insertTable(3, 3) },
-        { label: "插入代码块", hint: "Ctrl+Shift+C", icon: "code", onClick: () => insertCodeBlock() },
-        { label: "插入分割线", hint: "Ctrl+Shift+H", icon: "minus", onClick: insertHorizontalRule },
-      ],
-      [
-        { label: "插入行内公式 $…$", onClick: () => insertMath(false) },
-        { label: "插入块级公式 $$…$$", onClick: () => insertMath(true) },
-        { label: "插入 Mermaid 图表", icon: "columns", onClick: insertMermaid },
-      ],
-      [
-        { label: "插入链接…", hint: "Ctrl+K", icon: "link", onClick: () => void promptInsert("link") },
-        { label: "插入图片…", hint: "Ctrl+Shift+I", icon: "image", onClick: () => void promptInsert("image") },
-        { label: "插入日期时间", icon: "clock", onClick: insertDateTime },
-        { label: "插入目录 (TOC)", hint: "Ctrl+Shift+O", icon: "list", onClick: insertToc },
-      ],
-      [
-        { label: "插入标题 H1", hint: "Ctrl+1", onClick: () => setHeading(1) },
-        { label: "插入标题 H2", hint: "Ctrl+2", onClick: () => setHeading(2) },
-        { label: "插入标题 H3", hint: "Ctrl+3", onClick: () => setHeading(3) },
-        { label: "任务列表", hint: "Ctrl+Shift+9", icon: "check", onClick: () => toggleList("task") },
-        { label: "提示块", hint: "Ctrl+Shift+L", onClick: () => insertCallout("note") },
-        { label: "引用块", hint: "Ctrl+Shift+Q", onClick: toggleQuote },
+        { label: "插入", icon: "plus", submenu: insertSubmenu },
+        { label: "段落与列表", icon: "list", submenu: paragraphSubmenu },
+        { label: "提示块", submenu: calloutSubmenu },
       ],
     ];
   }, [hasSelection]);

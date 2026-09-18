@@ -17,6 +17,7 @@ import {
   setHeading,
   shiftHeading,
   toggleBold,
+  toggleHighlight,
   toggleInlineCode,
   toggleItalic,
   toggleList,
@@ -24,6 +25,7 @@ import {
   toggleStrikethrough,
   toggleSubscript,
   toggleSuperscript,
+  toggleUnderline,
 } from "../utils/editorCommands";
 import {
   closeDocWithConfirm,
@@ -122,6 +124,11 @@ export function useKeyboardShortcuts(): void {
           target?.isContentEditable === true);
 
       if (!mod) {
+        if (event.key === "F1") {
+          event.preventDefault();
+          useDialogStore.getState().setShortcutsVisible(true);
+          return;
+        }
         if (key === "escape") {
           const dialogs = useDialogStore.getState();
           if (
@@ -134,6 +141,10 @@ export function useKeyboardShortcuts(): void {
           }
           if (dialogs.settingsVisible) {
             dialogs.setSettingsVisible(false);
+            return;
+          }
+          if (dialogs.shortcutsVisible) {
+            dialogs.setShortcutsVisible(false);
             return;
           }
           if (useSearchStore.getState().visible) {
@@ -186,7 +197,7 @@ export function useKeyboardShortcuts(): void {
         shiftHeading(event.key === "ArrowUp" ? -1 : 1);
         return;
       }
-      // 上标 / 下标：Alt+Shift+= 与 Alt+Shift+-
+      // 上标 / 下标 / 下划线 / 删除线：Alt+Shift+…
       // （Shift 会改变 event.key，例如 = 变 +、- 变 _，所以用 code 判断）
       if (editable && event.altKey && event.shiftKey) {
         if (code === "Equal") {
@@ -204,8 +215,14 @@ export function useKeyboardShortcuts(): void {
           toggleStrikethrough();
           return;
         }
+        if (code === "KeyU") {
+          event.preventDefault();
+          toggleUnderline();
+          return;
+        }
       }
-      // 列表：Ctrl+Shift+7/8/9（同样受 Shift 影响 event.key，用 code 判断）
+      // 列表：Ctrl+Shift+7/8/9；高亮：Ctrl+Shift+M
+      // （同样受 Shift 影响 event.key，用 code 判断）
       if (editable && !event.altKey && event.shiftKey) {
         if (code === "Digit7") {
           event.preventDefault();
@@ -220,6 +237,11 @@ export function useKeyboardShortcuts(): void {
         if (code === "Digit9") {
           event.preventDefault();
           toggleList("task");
+          return;
+        }
+        if (code === "KeyM") {
+          event.preventDefault();
+          toggleHighlight();
           return;
         }
       }

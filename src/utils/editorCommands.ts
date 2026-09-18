@@ -267,6 +267,14 @@ export function toggleSuperscript(): void {
 export function toggleSubscript(): void {
   toggleWrap("~", "下标");
 }
+/** 高亮 ==text== */
+export function toggleHighlight(): void {
+  toggleWrap("==", "高亮");
+}
+/** 下划线 ++text++ */
+export function toggleUnderline(): void {
+  toggleWrap("++", "下划线");
+}
 export function insertLink(): void {
   wrapSelection("[", "](https://)", "链接文字");
 }

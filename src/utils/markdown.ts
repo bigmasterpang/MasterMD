@@ -506,6 +506,56 @@ function subSupPlugin(md: MarkdownItType): void {
   md.inline.ruler.after("sub", "sup", makeRule("sup"));
 }
 
+/** 高亮 ==text== 与下划线 ++text++（markdown-it-mark / markdown-it-ins 的精简实现） */
+function markInsPlugin(md: MarkdownItType): void {
+  const makeRule =
+    (name: "mark" | "ins", marker: number) =>
+    (state: import("markdown-it").StateInline, silent: boolean): boolean => {
+      const start = state.pos;
+      const max = state.posMax;
+      // 需要两个连续标记字符
+      if (
+        state.src.charCodeAt(start) !== marker ||
+        state.src.charCodeAt(start + 1) !== marker
+      ) {
+        return false;
+      }
+
+      let end = start + 2;
+      let matched = false;
+      while (end < max) {
+        const code = state.src.charCodeAt(end);
+        if (code === 0x5c) {
+          end += 2;
+          continue;
+        }
+        if (code === 0x0a) return false;
+        if (code === marker && state.src.charCodeAt(end + 1) === marker) {
+          matched = true;
+          break;
+        }
+        end += 1;
+      }
+      if (!matched || end === start + 2) return false;
+
+      const content = state.src.slice(start + 2, end);
+      // 前后带空格通常不是有意标记（例如 "a == b"），按普通文本处理
+      if (/^\s|\s$/.test(content)) return false;
+      if (silent) return true;
+
+      const open = state.push(name, name, 1);
+      open.markup = state.src.slice(start, start + 2);
+      const text = state.push("text", "", 0);
+      text.content = content;
+      state.push(name, name, -1);
+      state.pos = end + 2;
+      return true;
+    };
+
+  md.inline.ruler.after("escape", "mark", makeRule("mark", 0x3d)); // ==
+  md.inline.ruler.after("mark", "ins", makeRule("ins", 0x2b)); // ++
+}
+
 /* ------------------------------------------------------------------ */
 /* 渲染入口                                                            */
 /* ------------------------------------------------------------------ */
@@ -525,6 +575,7 @@ md.use((instance) => headingPlugin(instance, currentCollector));
 md.use(mathPlugin);
 md.use(calloutPlugin);
 md.use(subSupPlugin);
+md.use(markInsPlugin);
 
 // 外链统一在应用外打开（由预览层拦截），这里补上 rel 保证安全
 const defaultLinkOpen =

@@ -20,6 +20,7 @@ import {
   setHeading,
   shiftHeading,
   toggleBold,
+  toggleHighlight,
   toggleInlineCode,
   toggleItalic,
   toggleList,
@@ -27,6 +28,7 @@ import {
   toggleStrikethrough,
   toggleSubscript,
   toggleSuperscript,
+  toggleUnderline,
   transformCase,
 } from "../../utils/editorCommands";
 import { exportHtmlFile } from "../../utils/exportHtml";
@@ -253,6 +255,8 @@ export function Toolbar({ previewRef, isDark }: ToolbarProps) {
         { icon: "bold", label: "粗体", hint: "Ctrl+B", onClick: toggleBold },
         { icon: "italic", label: "斜体", hint: "Ctrl+I", onClick: toggleItalic },
         { icon: "minus", label: "删除线", hint: "Alt+Shift+5", onClick: toggleStrikethrough },
+        { label: "高亮", hint: "Ctrl+Shift+M", onClick: toggleHighlight },
+        { label: "下划线", hint: "Alt+Shift+U", onClick: toggleUnderline },
         { icon: "code", label: "行内代码", hint: "Ctrl+`", onClick: toggleInlineCode },
         { icon: "link", label: "链接", hint: "Ctrl+K", onClick: () => void promptInsert("link") },
         { label: "上标 x²", onClick: toggleSuperscript },
@@ -388,6 +392,11 @@ export function Toolbar({ previewRef, isDark }: ToolbarProps) {
         icon={THEME_META[theme].icon}
         label={`${THEME_META[theme].label}（点击切换）`}
         onClick={cycleTheme}
+      />
+      <ToolButton
+        icon="keyboard"
+        label="快捷键 (F1)"
+        onClick={() => useDialogStore.getState().setShortcutsVisible(true)}
       />
       <ToolButton
         icon="settings"

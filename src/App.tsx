@@ -33,6 +33,7 @@ import { useSearchStore } from "./stores/searchStore";
 import { useUpdateStore } from "./stores/updateStore";
 import { askUnsaved } from "./stores/dialogStore";
 import { UpdateDialog } from "./components/Dialogs/UpdateDialog";
+import { ShortcutsDialog } from "./components/Dialogs/ShortcutsDialog";
 import { useSettingsStore } from "./stores/settingsStore";
 import {
   displayName,
@@ -41,7 +42,7 @@ import {
   openPath,
   saveDoc,
 } from "./utils/fileActions";
-import { flushUiState, isTauri } from "./utils/persist";
+import { flushUiState, isTauri, restoreSession, startSessionTracking } from "./utils/persist";
 import { REALTIME_PREVIEW_LIMIT } from "./utils/constants";
 
 let startupHandled = false;
@@ -109,7 +110,13 @@ export default function App() {
         startupHandled = true;
         try {
           const startup = await invoke<string | null>("get_startup_file");
-          if (startup) await openPath(startup);
+          if (startup) {
+            await openPath(startup);
+          } else {
+            // 无启动文件时恢复上次会话（防止意外重载丢失内容）
+            await restoreSession();
+          }
+          startSessionTracking();
         } catch (error) {
           console.error("打开启动文件失败", error);
         }
@@ -241,6 +248,7 @@ export default function App() {
       <MessageDialog />
       <FormDialog />
       <UpdateDialog />
+      <ShortcutsDialog />
     </div>
   );
 }

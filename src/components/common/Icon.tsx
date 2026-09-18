@@ -43,6 +43,7 @@ export type IconName =
   | "clock"
   | "image"
   | "case-sensitive"
+  | "keyboard"
   | "loader";
 
 const PATHS: Record<IconName, string[]> = {
@@ -172,6 +173,16 @@ const PATHS: Record<IconName, string[]> = {
     "M3.8 12.5h5.4",
     "M20.5 16v-5a3 3 0 0 0-6 0",
     "M14.5 13.5h6v2.5a3 3 0 0 1-6 0z",
+  ],
+  keyboard: [
+    "M4 6h16a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2z",
+    "M6 10h.01",
+    "M10 10h.01",
+    "M14 10h.01",
+    "M18 10h.01",
+    "M6 14h.01",
+    "M18 14h.01",
+    "M9 14h6",
   ],
   loader: ["M12 2v4", "M12 18v4", "M4.93 4.93l2.83 2.83", "M16.24 16.24l2.83 2.83", "M2 12h4", "M18 12h4", "M4.93 19.07l2.83-2.83", "M16.24 7.76l2.83-2.83"],
 };

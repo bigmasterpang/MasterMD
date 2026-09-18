@@ -131,6 +131,8 @@ export const SHORTCUT_REFERENCE: ShortcutReferenceGroup[] = [
       { keys: "Ctrl+`", label: "行内代码" },
       { keys: "Alt+Shift+5", label: "删除线" },
       { keys: "Alt+Shift+= / Alt+Shift+-", label: "上标 / 下标" },
+      { keys: "Ctrl+Shift+M", label: "高亮 ==文字==" },
+      { keys: "Alt+Shift+U", label: "下划线 ++文字++" },
     ],
   },
   {
@@ -167,6 +169,8 @@ export const SHORTCUT_REFERENCE: ShortcutReferenceGroup[] = [
       { keys: "Ctrl+= / Ctrl+-", label: "字号增大 / 减小" },
       { keys: "Ctrl+滚轮", label: "缩放字号" },
       { keys: "Ctrl+,", label: "打开设置", configurable: true },
+      { keys: "F1", label: "快捷键面板" },
+      { keys: "右键", label: "编辑器 / 预览区上下文菜单" },
       { keys: "Esc", label: "关闭搜索栏 / 弹窗" },
     ],
   },

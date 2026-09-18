@@ -1,8 +1,9 @@
 import { LazyStore } from "@tauri-apps/plugin-store";
+import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow, LogicalSize } from "@tauri-apps/api/window";
-import { useAppStore } from "../stores/appStore";
+import { createDoc, docFromPayload, useAppStore } from "../stores/appStore";
 import { pickSettings, useSettingsStore } from "../stores/settingsStore";
-import type { Settings, ViewMode } from "../types";
+import type { FilePayload, Settings, ViewMode } from "../types";
 import { debounce } from "./timing";
 
 /** 是否运行在 Tauri 环境中（纯浏览器打开 vite 页面时跳过持久化） */
@@ -117,4 +118,105 @@ export async function flushUiState(): Promise<void> {
   } catch {
     /* ignore */
   }
+}
+
+/* ------------------------------------------------------------------ */
+/* 会话恢复：避免意外重载（如误按刷新）导致未保存内容丢失              */
+/* ------------------------------------------------------------------ */
+
+interface SessionPayload {
+  /** 已保存文档的路径（用于恢复标签页） */
+  paths: string[];
+  /** 未保存 / 未命名文档的内容 */
+  unsaved: Array<{ path: string | null; content: string }>;
+}
+
+const SESSION_TAB_LIMIT = 8;
+const SESSION_CONTENT_LIMIT = 512 * 1024;
+
+const persistSession = debounce(() => {
+  void writeSession();
+}, 1200);
+
+async function writeSession(): Promise<void> {
+  if (!file) return;
+  try {
+    const { docs } = useAppStore.getState();
+    const payload: SessionPayload = {
+      paths: docs
+        .filter((doc) => doc.filePath)
+        .map((doc) => doc.filePath as string)
+        .slice(0, SESSION_TAB_LIMIT),
+      unsaved: docs
+        .filter((doc) => doc.isDirty || !doc.filePath)
+        .filter((doc) => doc.content.length <= SESSION_CONTENT_LIMIT)
+        .slice(0, SESSION_TAB_LIMIT)
+        .map((doc) => ({ path: doc.filePath, content: doc.content })),
+    };
+    await file.set("session", payload);
+  } catch (error) {
+    console.error("保存会话失败", error);
+  }
+}
+
+/** 启动时恢复上次未保存的内容与打开的标签页 */
+export async function restoreSession(): Promise<void> {
+  if (!isTauri || !file) return;
+  try {
+    const payload = await file.get<SessionPayload>("session");
+    if (!payload) return;
+    const state = useAppStore.getState();
+    const opened = new Set(
+      state.docs
+        .map((doc) => doc.filePath?.toLowerCase())
+        .filter((path): path is string => Boolean(path)),
+    );
+
+    // 1. 未保存 / 未命名文档优先恢复
+    for (const entry of payload.unsaved ?? []) {
+      if (!entry.content) continue;
+      const doc = createDoc({
+        filePath: entry.path,
+        content: entry.content,
+        savedContent: entry.path ? "" : entry.content,
+        isDirty: Boolean(entry.path),
+      });
+      if (entry.path) {
+        try {
+          const disk = await invoke<FilePayload>("read_markdown_file", { path: entry.path });
+          doc.savedContent = disk.content;
+          doc.modifiedAt = disk.modifiedAt;
+          doc.size = disk.size;
+          doc.isDirty = disk.content !== entry.content;
+          opened.add(entry.path.toLowerCase());
+        } catch {
+          // 文件已不存在：保留内容，等待用户另存为
+          doc.isDirty = true;
+        }
+      }
+      state.addDoc(doc);
+    }
+
+    // 2. 其余已保存标签页
+    for (const path of payload.paths ?? []) {
+      if (opened.has(path.toLowerCase())) continue;
+      try {
+        const payloadData = await invoke<FilePayload>("read_markdown_file", { path });
+        if (payloadData.size > SESSION_CONTENT_LIMIT * 4) continue;
+        state.addDoc(docFromPayload(payloadData));
+        opened.add(path.toLowerCase());
+      } catch {
+        /* 打不开的文件跳过 */
+      }
+    }
+  } catch (error) {
+    console.error("恢复会话失败", error);
+  }
+}
+
+/** 开始监听文档变化并持久化会话 */
+export function startSessionTracking(): void {
+  useAppStore.subscribe((state, prev) => {
+    if (state.docs !== prev.docs) persistSession();
+  });
 }

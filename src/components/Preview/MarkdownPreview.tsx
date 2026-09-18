@@ -8,6 +8,7 @@ import { sanitizeHtml } from "../../utils/sanitize";
 import { useAppStore } from "../../stores/appStore";
 import { useSearchStore } from "../../stores/searchStore";
 import { buildRegex, type SearchOptions } from "../../utils/searchEngine";
+import { ContextMenu } from "../common/ContextMenu";
 
 interface Props {
   html: string;
@@ -33,6 +34,7 @@ export function MarkdownPreview({
   const bodyRef = useRef<HTMLDivElement>(null);
   const generationRef = useRef(0);
   const [markCount, setMarkCount] = useState(0);
+  const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
 
   const searchVisible = useSearchStore((s) => s.visible);
   const searchQuery = useSearchStore((s) => s.query);
@@ -188,16 +190,68 @@ export function MarkdownPreview({
     marks[index]?.scrollIntoView({ block: "center", behavior: "smooth" });
   }, [searchCurrent, markCount]);
 
+  /* ---------------- 右键菜单（预览区无法编辑，仅提供复制类操作） ---------------- */
+  useEffect(() => {
+    const root = scrollRef.current;
+    if (!root) return;
+    const onContextMenu = (event: MouseEvent) => {
+      event.preventDefault();
+      setMenu({ x: event.clientX, y: event.clientY });
+    };
+    root.addEventListener("contextmenu", onContextMenu);
+    return () => root.removeEventListener("contextmenu", onContextMenu);
+  }, [scrollRef]);
+
   return (
-    <div
-      ref={scrollRef}
-      className="print-plain h-full overflow-auto"
-      style={{ scrollBehavior: "auto" }}
-    >
-      <div className="print-content mx-auto w-full px-8 py-6" style={{ maxWidth: 900 }}>
-        <div ref={bodyRef} className="md-body" />
+    <>
+      <div
+        ref={scrollRef}
+        className="print-plain h-full overflow-auto"
+        style={{ scrollBehavior: "auto" }}
+      >
+        <div className="print-content mx-auto w-full px-8 py-6" style={{ maxWidth: 900 }}>
+          <div ref={bodyRef} className="md-body" />
+        </div>
       </div>
-    </div>
+      {menu ? (
+        <ContextMenu
+          x={menu.x}
+          y={menu.y}
+          onClose={() => setMenu(null)}
+          groups={[
+            [
+              {
+                label: "复制选中文本",
+                hint: "Ctrl+C",
+                onClick: () => {
+                  const text = window.getSelection()?.toString() ?? "";
+                  if (text) void navigator.clipboard.writeText(text);
+                },
+              },
+              {
+                label: "复制全文（纯文本）",
+                onClick: () => {
+                  const text = scrollRef.current?.innerText ?? "";
+                  if (text) void navigator.clipboard.writeText(text);
+                },
+              },
+              {
+                label: "全选",
+                hint: "Ctrl+A",
+                onClick: () => {
+                  const range = document.createRange();
+                  if (!scrollRef.current) return;
+                  range.selectNodeContents(scrollRef.current);
+                  const selection = window.getSelection();
+                  selection?.removeAllRanges();
+                  selection?.addRange(range);
+                },
+              },
+            ],
+          ]}
+        />
+      ) : null}
+    </>
   );
 }
 

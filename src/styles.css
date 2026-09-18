@@ -560,6 +560,22 @@ html.dark .md-body .callout-quote {
   line-height: 0;
 }
 
+/* 高亮 ==text== 与下划线 ++text++ */
+.md-body mark {
+  background: var(--mark-bg);
+  color: inherit;
+  border-radius: 3px;
+  padding: 0.05em 0.2em;
+}
+html.dark .md-body mark {
+  background: #6b5d1f;
+}
+.md-body ins {
+  text-decoration: underline;
+  text-decoration-color: var(--accent);
+  text-underline-offset: 3px;
+}
+
 /* front matter 元数据卡片 */
 .front-matter {
   margin-bottom: 1.5em;

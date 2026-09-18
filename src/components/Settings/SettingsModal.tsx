@@ -4,14 +4,7 @@ import { Icon } from "../common/Icon";
 import { useDialogStore } from "../../stores/dialogStore";
 import { useSettingsStore } from "../../stores/settingsStore";
 import { useUpdateStore } from "../../stores/updateStore";
-import type { AccentName, ShortcutId, ThemeMode } from "../../types";
-import {
-  SHORTCUT_IDS,
-  SHORTCUT_LABELS,
-  SHORTCUT_REFERENCE,
-  eventToShortcut,
-  findConflict,
-} from "../../utils/shortcuts";
+import type { AccentName, ThemeMode } from "../../types";
 import { MAX_FONT_SIZE, MIN_FONT_SIZE, MIN_AUTOSAVE_INTERVAL } from "../../utils/constants";
 import { getVersion } from "@tauri-apps/api/app";
 
@@ -42,8 +35,6 @@ export function SettingsModal() {
   const close = () => useDialogStore.getState().setSettingsVisible(false);
   const settings = useSettingsStore();
   const updateState = useUpdateStore();
-  const [capturing, setCapturing] = useState<ShortcutId | null>(null);
-  const [conflict, setConflict] = useState<string | null>(null);
   const [version, setVersion] = useState("");
 
   useEffect(() => {
@@ -54,25 +45,6 @@ export function SettingsModal() {
 
   const update = (patch: Parameters<typeof settings.update>[0]) => {
     settings.update(patch);
-    setConflict(null);
-  };
-
-  const captureShortcut = (id: ShortcutId, event: React.KeyboardEvent) => {
-    event.preventDefault();
-    event.stopPropagation();
-    if (event.key === "Escape") {
-      setCapturing(null);
-      return;
-    }
-    const value = eventToShortcut(event.nativeEvent);
-    if (!value) return;
-    const other = findConflict(settings.shortcuts, id, value);
-    if (other) {
-      setConflict(`「${value}」已被「${SHORTCUT_LABELS[other]}」占用`);
-      return;
-    }
-    update({ shortcuts: { ...settings.shortcuts, [id]: value } });
-    setCapturing(null);
   };
 
   return (
@@ -87,7 +59,6 @@ export function SettingsModal() {
             variant="ghost"
             onClick={() => {
               settings.reset();
-              setConflict(null);
             }}
           >
             恢复默认
@@ -211,67 +182,16 @@ export function SettingsModal() {
         </Section>
 
         <Section title="快捷键">
-          <div className="mb-2 text-[11px] text-faint">
-            点击右侧按键框后按下新的组合键（需包含 Ctrl）
-          </div>
-          {conflict ? (
-            <div className="mb-2 flex items-center gap-1 rounded-md bg-danger-soft px-2 py-1 text-[11px] text-danger">
-              <Icon name="alert-triangle" size={12} />
-              {conflict}
-            </div>
-          ) : null}
-          <div className="grid grid-cols-2 gap-x-6 gap-y-2">
-            {SHORTCUT_IDS.map((id) => (
-              <div key={id} className="flex items-center justify-between gap-2">
-                <span className="truncate text-[12px] text-muted">
-                  {SHORTCUT_LABELS[id]}
-                </span>
-                <button
-                  type="button"
-                  tabIndex={0}
-                  onClick={() => setCapturing(id)}
-                  onKeyDown={(event) => {
-                    if (capturing === id) captureShortcut(id, event);
-                  }}
-                  className={`min-w-[92px] rounded-md border px-2 py-1 font-mono text-[11px] ${
-                    capturing === id
-                      ? "border-accent bg-accent-soft text-accent"
-                      : "border-line bg-input text-fg hover:bg-hover"
-                  }`}
-                >
-                  {capturing === id ? "按下按键…" : settings.shortcuts[id]}
-                </button>
-              </div>
-            ))}
-          </div>
-        </Section>
-
-        <Section title="全部快捷键">
-          <div className="mb-2 text-[11px] text-faint">
-            带「可自定义」标记的项可在上方修改；其余为固定快捷键（源码 / 分屏模式生效）
-          </div>
-          <div className="space-y-3">
-            {SHORTCUT_REFERENCE.map((group) => (
-              <div key={group.title}>
-                <div className="mb-1 text-[11px] font-semibold text-muted">{group.title}</div>
-                <div className="grid grid-cols-1 gap-x-6 gap-y-1 sm:grid-cols-2">
-                  {group.items.map((item) => (
-                    <div key={item.keys} className="flex items-baseline justify-between gap-2">
-                      <span className="truncate text-[12px] text-muted" title={item.label}>
-                        {item.label}
-                      </span>
-                      <span className="shrink-0 font-mono text-[11px] text-fg">
-                        {item.keys}
-                        {item.configurable ? (
-                          <span className="ml-1 text-[10px] text-accent">可自定义</span>
-                        ) : null}
-                      </span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            ))}
-          </div>
+          <Row label="可自定义绑定与全部快捷键参考">
+            <button
+              type="button"
+              onClick={() => useDialogStore.getState().setShortcutsVisible(true)}
+              className="flex items-center gap-1.5 rounded-md border border-line bg-input px-2.5 py-1 text-[12px] text-fg hover:bg-hover"
+            >
+              <Icon name="keyboard" size={13} />
+              打开快捷键面板
+            </button>
+          </Row>
         </Section>
 
         <Section title="版本更新">

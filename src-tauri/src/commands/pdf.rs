@@ -7,7 +7,8 @@
 use tauri::Manager;
 
 /// 关闭 WebView2 的浏览器快捷键（Ctrl+P / Ctrl+F / F3 / F12 等），
-/// 让这些按键交给应用自身的快捷键体系处理。
+/// 并禁用默认右键菜单（其中的“刷新”会重载页面导致未保存内容丢失）。
+/// 这些按键与菜单交由应用自身的快捷键体系与自定义菜单处理。
 #[cfg(windows)]
 pub fn disable_browser_accelerators(app: &tauri::AppHandle) {
     use webview2_com::Microsoft::Web::WebView2::Win32::ICoreWebView2Settings3;
@@ -27,6 +28,8 @@ pub fn disable_browser_accelerators(app: &tauri::AppHandle) {
         if let Ok(settings3) = settings.cast::<ICoreWebView2Settings3>() {
             unsafe {
                 let _ = settings3.SetAreBrowserAcceleratorKeysEnabled(false);
+                // 禁用默认右键菜单（避免“刷新 / 重新加载”丢失编辑内容）
+                let _ = settings3.SetAreDefaultContextMenusEnabled(false);
             }
         }
     });
