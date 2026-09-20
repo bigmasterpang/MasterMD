@@ -241,9 +241,21 @@ export function AboutDialog() {
                     close();
                   }}
                   className="rounded-md border border-transparent bg-accent px-2.5 py-1 text-[11px] font-semibold text-accent-fg transition-opacity hover:opacity-90"
-                >
-                  🗝️ 进入 Markdown 地牢
-                </button>
+                  >
+                    🗝️ Markdown 地牢（小游戏）
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      void import("../../wuxia/store").then((m) => {
+                        m.useWuxiaStore.getState().openPanel();
+                        close();
+                      });
+                    }}
+                    className="rounded-md border border-line bg-elevated px-2.5 py-1 text-[11px] font-semibold text-fg hover:bg-hover"
+                  >
+                    🏯 Markdown 江湖（文字武侠）
+                  </button>
                 <button
                   type="button"
                   onClick={() => setConfetti(makeConfetti())}

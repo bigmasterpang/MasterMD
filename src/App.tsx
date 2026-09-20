@@ -36,6 +36,7 @@ import { UpdateDialog } from "./components/Dialogs/UpdateDialog";
 import { ShortcutsDialog } from "./components/Dialogs/ShortcutsDialog";
 import { AboutDialog } from "./components/Dialogs/AboutDialog";
 import { DungeonDialog } from "./components/Dialogs/DungeonDialog";
+import { WuxiaDialog } from "./wuxia/ui/WuxiaDialog";
 import { useSettingsStore } from "./stores/settingsStore";
 import {
   displayName,
@@ -253,6 +254,7 @@ export default function App() {
       <ShortcutsDialog />
       <AboutDialog />
       <DungeonDialog />
+      <WuxiaDialog />
     </div>
   );
 }
