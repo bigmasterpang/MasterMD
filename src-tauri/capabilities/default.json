@@ -13,7 +13,6 @@
     "core:window:allow-is-maximized",
     "dialog:default",
     "store:default",
-    "opener:allow-open-url",
-    "opener:allow-open-path"
+    "opener:default"
   ]
 }

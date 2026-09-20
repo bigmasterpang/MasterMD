@@ -198,6 +198,28 @@ html.dark[data-accent="rose"] {
   background: transparent;
 }
 
+/* 关于面板的彩蛋彩纸动画 */
+.mm-confetti-piece {
+  position: absolute;
+  top: -14px;
+  border-radius: 2px;
+  opacity: 0.95;
+  animation-name: mm-confetti-fall;
+  animation-timing-function: linear;
+  animation-fill-mode: forwards;
+}
+
+@keyframes mm-confetti-fall {
+  0% {
+    transform: translateY(0) rotate(0deg);
+    opacity: 1;
+  }
+  100% {
+    transform: translateY(420px) rotate(720deg);
+    opacity: 0;
+  }
+}
+
 /* 拖拽遮罩 */
 .drop-overlay {
   position: absolute;

@@ -26,6 +26,8 @@ Rust 侧：`cd src-tauri && cargo check --message-format=short`
 - 仅在用户明确要求时才执行 git commit / push
 - 推送目标：`https://github.com/bigmasterpang/MasterMD`（凭据已存于 git credential store）
 - GitHub Release 通过 REST API 创建，Token 位于 `C:\opencode\github_tokens`（**禁止**写入仓库或输出到日志）
+- **发布顺序必须是：commit → push main → 打 tag → push tag → 再创建 Release**。若在推送 tag 前创建 Release，GitHub 会把标签指向当时的默认分支 HEAD，导致 tag 指向错误提交且后续 push 被拒
+- 创建 Release 后必须核对 `releases/latest` 的资产名与版本号是否与本地文件一致
 
 ## 完成后必须发送微信通知
 

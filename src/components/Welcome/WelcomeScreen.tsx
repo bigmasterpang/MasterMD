@@ -13,9 +13,7 @@ export function WelcomeScreen() {
     <div className="flex h-full items-center justify-center overflow-auto bg-app">
       <div className="w-full max-w-[520px] px-8 py-10">
         <div className="mb-8 flex items-center gap-3">
-          <div className="flex h-11 w-11 items-center justify-center rounded-[10px] bg-accent-soft text-accent">
-            <Icon name="file-text" size={22} />
-          </div>
+          <img src="/app-icon.png" alt={APP_NAME} className="h-11 w-11 rounded-[10px]" />
           <div>
             <div className="text-[19px] font-semibold text-fg">{APP_NAME}</div>
             <div className="text-[12px] text-muted">
