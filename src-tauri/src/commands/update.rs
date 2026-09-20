@@ -639,13 +639,18 @@ pub fn cleanup_old_binary() {
     }
 }
 
-/// 打开安装包所在目录（辅助入口）
+/// 退出应用（自更新替换完成后调用，确保旧进程立即结束）
 #[cfg(windows)]
 #[tauri::command]
-pub async fn reveal_in_explorer(path: String) -> Result<(), String> {
-    std::process::Command::new("explorer.exe")
-        .arg(format!("/select,{path}"))
-        .spawn()
-        .map_err(|e| format!("打开资源管理器失败: {e}"))?;
-    Ok(())
+pub fn quit_app(app: tauri::AppHandle) {
+    app.exit(0);
+}
+
+/// 当前程序所在路径（关于面板展示，便于用户确认便携版位置）
+#[cfg(windows)]
+#[tauri::command]
+pub fn current_exe_path() -> Option<String> {
+    std::env::current_exe()
+        .ok()
+        .map(|p| p.to_string_lossy().to_string())
 }

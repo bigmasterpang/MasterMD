@@ -19,12 +19,17 @@ export function AboutDialog() {
   const info = useUpdateStore((s) => s.info);
   const checking = useUpdateStore((s) => s.checking);
   const [version, setVersion] = useState("");
+  const [exePath, setExePath] = useState("");
 
   useEffect(() => {
     if (!open) return;
     void getVersion()
       .then(setVersion)
       .catch(() => setVersion("0.0.0"));
+    void import("@tauri-apps/api/core")
+      .then(({ invoke }) => invoke<string>("current_exe_path"))
+      .then(setExePath)
+      .catch(() => setExePath(""));
   }, [open]);
 
   return (
@@ -76,6 +81,19 @@ export function AboutDialog() {
           <div className="mt-0.5 text-[11px] text-muted">
             Master 系列软件作者 · 本站所有软件均为其设计与开发
           </div>
+        </div>
+
+        <div className="rounded-[var(--radius)] border border-line bg-panel px-3 py-2.5 text-[12px]">
+          <div className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-faint">
+            便携版
+          </div>
+          <div className="text-muted">
+            本程序为单文件便携版：双击即用，无需安装与卸载，可放在任意目录（含 U 盘）。
+            应用内更新会自动替换当前程序并重启。
+          </div>
+          {exePath ? (
+            <div className="mt-1 break-all font-mono text-[10px] text-faint">{exePath}</div>
+          ) : null}
         </div>
 
         <div className="space-y-1 text-[11px] leading-relaxed text-muted">

@@ -18,6 +18,7 @@ export function UpdateDialog() {
     total,
     downloadedPath,
     installed,
+    restarting,
   } = useUpdateStore();
   const [showNotes, setShowNotes] = useState(true);
   const close = () => useUpdateStore.getState().hideDialog();
@@ -29,11 +30,13 @@ export function UpdateDialog() {
 
   const title = error
     ? "更新失败"
-    : downloading
-      ? "正在下载更新"
-      : info?.hasUpdate
-        ? "发现新版本"
-        : "检查更新";
+    : restarting
+      ? "正在重启到新版本"
+      : downloading
+        ? "正在下载更新"
+        : info?.hasUpdate
+          ? "发现新版本"
+          : "检查更新";
 
   const footer = error ? (
     <>
@@ -135,6 +138,16 @@ export function UpdateDialog() {
           </div>
           <div className="text-[11px] text-faint">
             下载完成后会自动校验 SHA-256，随后{isInstaller ? "启动安装向导" : "替换程序并重启"}
+          </div>
+        </div>
+      ) : restarting ? (
+        <div className="space-y-3">
+          <div className="flex items-center gap-2">
+            <Icon name="check" size={18} className="text-success" />
+            <div>新版本已就位，正在自动重启…</div>
+          </div>
+          <div className="text-[12px] text-muted">
+            程序将自动关闭并启动新版本；未保存内容会在重启后恢复。
           </div>
         </div>
       ) : downloadedPath ? (

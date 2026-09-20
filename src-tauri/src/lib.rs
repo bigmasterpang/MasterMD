@@ -93,7 +93,9 @@ pub fn run() {
             #[cfg(windows)]
             commands::update::apply_update,
             #[cfg(windows)]
-            commands::update::reveal_in_explorer,
+            commands::update::quit_app,
+            #[cfg(windows)]
+            commands::update::current_exe_path,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

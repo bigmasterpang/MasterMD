@@ -30,6 +30,8 @@ interface UpdateState {
   total: number;
   downloadedPath: string | null;
   installed: boolean;
+  /** 正在替换并重启 */
+  restarting: boolean;
 
   check: (options?: { silent?: boolean }) => Promise<void>;
   showDialog: () => void;
@@ -54,6 +56,7 @@ export const useUpdateStore = create<UpdateState>((set, get) => ({
   total: 0,
   downloadedPath: null,
   installed: false,
+  restarting: false,
 
   check: async (options = {}) => {
     if (get().checking) return;
@@ -139,12 +142,18 @@ export const useUpdateStore = create<UpdateState>((set, get) => ({
     const path = get().downloadedPath;
     if (!path) return;
     try {
+      set({ restarting: true });
       await invoke("apply_update", { path });
       set({ installed: true });
-      // 新版本已启动，关闭当前窗口
-      await invoke("confirm_close");
+      // 给界面一点时间显示"正在重启"，随后强制退出旧进程
+      await new Promise((resolve) => setTimeout(resolve, 700));
+      try {
+        await invoke("quit_app");
+      } catch {
+        await invoke("confirm_close");
+      }
     } catch (error) {
-      set({ error: String(error) });
+      set({ restarting: false, error: String(error) });
     }
   },
 
@@ -160,5 +169,11 @@ export const useUpdateStore = create<UpdateState>((set, get) => ({
   },
 
   resetDownload: () =>
-    set({ downloadedPath: null, progress: 0, received: 0, installed: false }),
+    set({
+      downloadedPath: null,
+      progress: 0,
+      received: 0,
+      installed: false,
+      restarting: false,
+    }),
 }));
