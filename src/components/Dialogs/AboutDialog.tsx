@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Modal, Button } from "../common/Modal";
 import { useDialogStore } from "../../stores/dialogStore";
 import { useUpdateStore } from "../../stores/updateStore";
+import { useDungeonStore } from "../../stores/dungeonStore";
 import { openReleasesPage, PORTAL_URL } from "../../utils/updateCheck";
 import {
   APP_NAME,
@@ -61,6 +62,7 @@ export function AboutDialog() {
     () => typeof localStorage !== "undefined" && localStorage.getItem(EGG_STORAGE_KEY) === "1",
   );
   const [confetti, setConfetti] = useState<ConfettiPiece[]>([]);
+  const dungeonMeta = useDungeonStore((s) => s.meta);
 
   useEffect(() => {
     // 每次打开/关闭都重置临时状态（点击计数、提示语、彩纸）
@@ -231,13 +233,30 @@ export function AboutDialog() {
               <div className="mt-2 text-[11px] text-muted">
                 {APP_NAME} 是 Master 系列软件的一员，愿你写得顺手、读得舒心。
               </div>
-              <button
-                type="button"
-                onClick={() => setConfetti(makeConfetti())}
-                className="mt-2 rounded-md border border-line bg-elevated px-2 py-1 text-[11px] text-fg hover:bg-hover"
-              >
-                再撒一次彩纸 🎊
-              </button>
+              <div className="mt-2 flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    useDungeonStore.getState().open();
+                    close();
+                  }}
+                  className="rounded-md border border-transparent bg-accent px-2.5 py-1 text-[11px] font-semibold text-accent-fg transition-opacity hover:opacity-90"
+                >
+                  🗝️ 进入 Markdown 地牢
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setConfetti(makeConfetti())}
+                  className="rounded-md border border-line bg-elevated px-2 py-1 text-[11px] text-fg hover:bg-hover"
+                >
+                  再撒一次彩纸 🎊
+                </button>
+                {dungeonMeta.cleared ? (
+                  <span className="rounded bg-elevated px-1.5 py-0.5 text-[10px] text-fg">
+                    🏆 地牢已通关
+                  </span>
+                ) : null}
+              </div>
             </div>
           ) : (
             <div className="space-y-1 text-[11px] leading-relaxed text-muted">
