@@ -63,8 +63,10 @@ export function AboutDialog() {
   const [confetti, setConfetti] = useState<ConfettiPiece[]>([]);
 
   useEffect(() => {
-    if (!open) return;
+    // 每次打开/关闭都重置临时状态（点击计数、提示语、彩纸）
+    setClicks(0);
     setConfetti([]);
+    if (!open) return;
     void getVersion()
       .then(setVersion)
       .catch(() => setVersion("0.0.0"));
