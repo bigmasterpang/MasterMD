@@ -394,13 +394,12 @@ export function Toolbar({ previewRef, isDark }: ToolbarProps) {
         onClick={cycleTheme}
       />
       <ToolButton
-        icon="columns"
-        label="江湖 · 隐藏玩法"
-        onClick={() =>
-          void import("../../wuxia/store").then((m) =>
-            m.useWuxiaStore.getState().openPanel(),
-          )
-        }
+        icon="sword"
+        label="江湖"
+        onClick={() => {
+          useAppStore.getState().openGame();
+          void import("../../wuxia/store").then((m) => m.useWuxiaStore.getState().ensureLoaded());
+        }}
       />
       <ToolButton
         icon="keyboard"

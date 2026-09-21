@@ -124,7 +124,8 @@ export interface SkillDef {
   reqLevel: number;
   /** 前置技能 */
   reqSkill?: string;
-  cost: { contribution: number; silver: number };
+  /** 学习消耗：门派贡献 / 银两 / 修为（经验） */
+  cost: { contribution: number; silver: number; exp: number };
   /** 内力消耗 */
   mp: number;
   /** 伤害系数 */
@@ -231,6 +232,8 @@ export interface QuestState {
   active: string[];
   progress: Record<string, number>;
   completed: string[];
+  /** 日常任务最近重置日期（YYYY-MM-DD） */
+  dailyDate?: string;
 }
 
 export interface IdleConfig {
@@ -249,6 +252,7 @@ export interface IdleConfig {
 export interface IdleReport {
   minutes: number;
   battles: number;
+  kills: number;
   exp: number;
   silver: number;
   drops: string[];
@@ -261,7 +265,7 @@ export interface IdleState {
   /** 最近一次结算时间戳 */
   lastTick: number;
   /** 本次挂机累计 */
-  session: { startedAt: number; battles: number; exp: number; silver: number; drops: string[]; deaths: number };
+  session: { startedAt: number; battles: number; kills: number; exp: number; silver: number; drops: string[]; deaths: number };
   /** 日志（最近 200 行） */
   log: string[];
   /** 离线/挂机报告 */

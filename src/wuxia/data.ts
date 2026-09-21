@@ -341,25 +341,25 @@ export const SECT_BY_ID: Record<string, SectDef> = Object.fromEntries(
 
 export const SKILLS: SkillDef[] = [
   // 青城剑派
-  { id: "qc_1", name: "青城基础剑法", sect: "qingcheng", tier: 1, reqLevel: 3, cost: { contribution: 0, silver: 100 }, mp: 8, coef: 1.35, kind: "damage", desc: "一剑直刺，攻击系数 135%。" },
-  { id: "qc_2", name: "松风剑诀", sect: "qingcheng", tier: 2, reqLevel: 10, reqSkill: "qc_1", cost: { contribution: 120, silver: 600 }, mp: 16, coef: 0.95, kind: "damage", effect: { hits: 2 }, desc: "两段连击，每段系数 95%。" },
-  { id: "qc_3", name: "风卷残云", sect: "qingcheng", tier: 3, reqLevel: 22, reqSkill: "qc_2", cost: { contribution: 400, silver: 2200 }, mp: 28, coef: 1.5, kind: "aoe", effect: { aoe: true, critBonus: 0.1 }, desc: "群体剑势，系数 150%，暴击 +10%。" },
-  { id: "qc_4", name: "青城十三剑", sect: "qingcheng", tier: 4, reqLevel: 38, reqSkill: "qc_3", cost: { contribution: 1200, silver: 8000 }, mp: 48, coef: 0.62, kind: "damage", effect: { hits: 4, critBonus: 0.15 }, desc: "绝学：四段连击，每段系数 62%，暴击 +15%。" },
+  { id: "qc_1", name: "青城基础剑法", sect: "qingcheng", tier: 1, reqLevel: 3, cost: { contribution: 0, silver: 100, exp: 220 }, mp: 8, coef: 1.35, kind: "damage", desc: "一剑直刺，攻击系数 135%。" },
+  { id: "qc_2", name: "松风剑诀", sect: "qingcheng", tier: 2, reqLevel: 10, reqSkill: "qc_1", cost: { contribution: 120, silver: 600, exp: 1400 }, mp: 16, coef: 0.95, kind: "damage", effect: { hits: 2 }, desc: "两段连击，每段系数 95%。" },
+  { id: "qc_3", name: "风卷残云", sect: "qingcheng", tier: 3, reqLevel: 22, reqSkill: "qc_2", cost: { contribution: 400, silver: 2200, exp: 5200 }, mp: 28, coef: 1.5, kind: "aoe", effect: { aoe: true, critBonus: 0.1 }, desc: "群体剑势，系数 150%，暴击 +10%。" },
+  { id: "qc_4", name: "青城十三剑", sect: "qingcheng", tier: 4, reqLevel: 38, reqSkill: "qc_3", cost: { contribution: 1200, silver: 8000, exp: 13000 }, mp: 48, coef: 0.62, kind: "damage", effect: { hits: 4, critBonus: 0.15 }, desc: "绝学：四段连击，每段系数 62%，暴击 +15%。" },
   // 少林
-  { id: "sl_1", name: "罗汉拳", sect: "shaolin", tier: 1, reqLevel: 10, cost: { contribution: 0, silver: 200 }, mp: 10, coef: 1.25, kind: "damage", effect: { shield: 0.1 }, desc: "拳出如锤，减伤 10%（本场）。" },
-  { id: "sl_2", name: "金刚杵", sect: "shaolin", tier: 2, reqLevel: 18, reqSkill: "sl_1", cost: { contribution: 150, silver: 900 }, mp: 18, coef: 1.6, kind: "damage", effect: { shield: 0.15 }, desc: "重击，系数 160%，减伤 15%。" },
-  { id: "sl_3", name: "韦陀掌", sect: "shaolin", tier: 3, reqLevel: 30, reqSkill: "sl_2", cost: { contribution: 450, silver: 2600 }, mp: 30, coef: 1.4, kind: "aoe", effect: { aoe: true, shield: 0.2 }, desc: "群体掌力，系数 140%，减伤 20%。" },
-  { id: "sl_4", name: "金刚伏魔", sect: "shaolin", tier: 4, reqLevel: 44, reqSkill: "sl_3", cost: { contribution: 1400, silver: 9000 }, mp: 45, coef: 1.9, kind: "damage", effect: { shield: 0.3, reflect: 0.3 }, desc: "绝学：系数 190%，减伤 30% 且反弹 30% 伤害。" },
+  { id: "sl_1", name: "罗汉拳", sect: "shaolin", tier: 1, reqLevel: 10, cost: { contribution: 0, silver: 200, exp: 1400 }, mp: 10, coef: 1.25, kind: "damage", effect: { shield: 0.1 }, desc: "拳出如锤，减伤 10%（本场）。" },
+  { id: "sl_2", name: "金刚杵", sect: "shaolin", tier: 2, reqLevel: 18, reqSkill: "sl_1", cost: { contribution: 150, silver: 900, exp: 3600 }, mp: 18, coef: 1.6, kind: "damage", effect: { shield: 0.15 }, desc: "重击，系数 160%，减伤 15%。" },
+  { id: "sl_3", name: "韦陀掌", sect: "shaolin", tier: 3, reqLevel: 30, reqSkill: "sl_2", cost: { contribution: 450, silver: 2600, exp: 8600 }, mp: 30, coef: 1.4, kind: "aoe", effect: { aoe: true, shield: 0.2 }, desc: "群体掌力，系数 140%，减伤 20%。" },
+  { id: "sl_4", name: "金刚伏魔", sect: "shaolin", tier: 4, reqLevel: 44, reqSkill: "sl_3", cost: { contribution: 1400, silver: 9000, exp: 16000 }, mp: 45, coef: 1.9, kind: "damage", effect: { shield: 0.3, reflect: 0.3 }, desc: "绝学：系数 190%，减伤 30% 且反弹 30% 伤害。" },
   // 唐门
-  { id: "tm_1", name: "淬毒飞针", sect: "tangmen", tier: 1, reqLevel: 28, cost: { contribution: 0, silver: 400 }, mp: 12, coef: 1.2, kind: "damage", effect: { poison: 0.35 }, desc: "附加中毒（每回合 35% 攻击，3 回合）。" },
-  { id: "tm_2", name: "追魂夺命", sect: "tangmen", tier: 2, reqLevel: 33, reqSkill: "tm_1", cost: { contribution: 200, silver: 1500 }, mp: 22, coef: 1.8, kind: "damage", effect: { critBonus: 0.25 }, desc: "系数 180%，暴击 +25%。" },
-  { id: "tm_3", name: "漫天花雨", sect: "tangmen", tier: 3, reqLevel: 40, reqSkill: "tm_2", cost: { contribution: 500, silver: 3200 }, mp: 34, coef: 1.35, kind: "aoe", effect: { aoe: true, poison: 0.25 }, desc: "群体暗器并施毒。" },
-  { id: "tm_4", name: "满天花雨", sect: "tangmen", tier: 4, reqLevel: 50, reqSkill: "tm_3", cost: { contribution: 1600, silver: 11000 }, mp: 52, coef: 0.85, kind: "damage", effect: { hits: 3, poison: 0.5, critBonus: 0.2 }, desc: "绝学：三段暗器，每段 85%，剧毒 +50%，暴击 +20%。" },
+  { id: "tm_1", name: "淬毒飞针", sect: "tangmen", tier: 1, reqLevel: 28, cost: { contribution: 0, silver: 400, exp: 7600 }, mp: 12, coef: 1.2, kind: "damage", effect: { poison: 0.35 }, desc: "附加中毒（每回合 35% 攻击，3 回合）。" },
+  { id: "tm_2", name: "追魂夺命", sect: "tangmen", tier: 2, reqLevel: 33, reqSkill: "tm_1", cost: { contribution: 200, silver: 1500, exp: 10000 }, mp: 22, coef: 1.8, kind: "damage", effect: { critBonus: 0.25 }, desc: "系数 180%，暴击 +25%。" },
+  { id: "tm_3", name: "漫天花雨", sect: "tangmen", tier: 3, reqLevel: 40, reqSkill: "tm_2", cost: { contribution: 500, silver: 3200, exp: 13000 }, mp: 34, coef: 1.35, kind: "aoe", effect: { aoe: true, poison: 0.25 }, desc: "群体暗器并施毒。" },
+  { id: "tm_4", name: "满天花雨", sect: "tangmen", tier: 4, reqLevel: 50, reqSkill: "tm_3", cost: { contribution: 1600, silver: 11000, exp: 19000 }, mp: 52, coef: 0.85, kind: "damage", effect: { hits: 3, poison: 0.5, critBonus: 0.2 }, desc: "绝学：三段暗器，每段 85%，剧毒 +50%，暴击 +20%。" },
   // 逍遥谷
-  { id: "xy_1", name: "吐纳术", sect: "xiaoyao", tier: 1, reqLevel: 38, cost: { contribution: 0, silver: 500 }, mp: 6, coef: 0.9, kind: "buff", effect: { heal: 0.15 }, desc: "回气养身：攻击系数 90%，回复 15% 气血。" },
-  { id: "xy_2", name: "北冥神功", sect: "xiaoyao", tier: 2, reqLevel: 42, reqSkill: "xy_1", cost: { contribution: 250, silver: 2000 }, mp: 20, coef: 1.3, kind: "damage", effect: { lifesteal: 0.25 }, desc: "吸人内力：系数 130%，吸血 +25%。" },
-  { id: "xy_3", name: "凌波微步", sect: "xiaoyao", tier: 3, reqLevel: 48, reqSkill: "xy_2", cost: { contribution: 600, silver: 4000 }, mp: 26, coef: 1.45, kind: "damage", effect: { dodgeUp: 0.25, lifesteal: 0.15 }, desc: "系数 145%，闪避 +25% 并吸血 15%。" },
-  { id: "xy_4", name: "北冥吞天", sect: "xiaoyao", tier: 4, reqLevel: 55, reqSkill: "xy_3", cost: { contribution: 1800, silver: 13000 }, mp: 55, coef: 1.7, kind: "aoe", effect: { aoe: true, lifesteal: 0.4, heal: 0.1 }, desc: "绝学：群体 170%，吸血 40%，回气 10%。" },
+  { id: "xy_1", name: "吐纳术", sect: "xiaoyao", tier: 1, reqLevel: 38, cost: { contribution: 0, silver: 500, exp: 12000 }, mp: 6, coef: 0.9, kind: "buff", effect: { heal: 0.15 }, desc: "回气养身：攻击系数 90%，回复 15% 气血。" },
+  { id: "xy_2", name: "北冥神功", sect: "xiaoyao", tier: 2, reqLevel: 42, reqSkill: "xy_1", cost: { contribution: 250, silver: 2000, exp: 14000 }, mp: 20, coef: 1.3, kind: "damage", effect: { lifesteal: 0.25 }, desc: "吸人内力：系数 130%，吸血 +25%。" },
+  { id: "xy_3", name: "凌波微步", sect: "xiaoyao", tier: 3, reqLevel: 48, reqSkill: "xy_2", cost: { contribution: 600, silver: 4000, exp: 17000 }, mp: 26, coef: 1.45, kind: "damage", effect: { dodgeUp: 0.25, lifesteal: 0.15 }, desc: "系数 145%，闪避 +25% 并吸血 15%。" },
+  { id: "xy_4", name: "北冥吞天", sect: "xiaoyao", tier: 4, reqLevel: 55, reqSkill: "xy_3", cost: { contribution: 1800, silver: 13000, exp: 23000 }, mp: 55, coef: 1.7, kind: "aoe", effect: { aoe: true, lifesteal: 0.4, heal: 0.1 }, desc: "绝学：群体 170%，吸血 40%，回气 10%。" },
 ];
 
 export const SKILL_MAP: Record<string, SkillDef> = Object.fromEntries(SKILLS.map((s) => [s.id, s]));

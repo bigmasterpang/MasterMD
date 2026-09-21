@@ -72,7 +72,12 @@ function migrate(input: Partial<SaveGame>): SaveGame {
     version: SAVE_VERSION,
     player: { ...base.player, ...input.player },
     quests: { ...base.quests, ...input.quests },
-    idle: { ...base.idle, ...input.idle, config: { ...base.idle.config, ...input.idle?.config } },
+    idle: {
+      ...base.idle,
+      ...input.idle,
+      config: { ...base.idle.config, ...input.idle?.config },
+      session: { ...base.idle.session, ...input.idle?.session },
+    },
     stats: { ...base.stats, ...input.stats },
     dungeonDaily: input.dungeonDaily ?? {},
     maps: input.maps && input.maps.length > 0 ? input.maps : base.maps,

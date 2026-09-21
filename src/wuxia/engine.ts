@@ -50,6 +50,16 @@ const pick = <T,>(list: T[]): T => list[rand(0, list.length - 1)];
 /** 升级所需经验 */
 export const expForLevel = (level: number) => Math.round(100 * Math.pow(level, 1.6));
 
+/**
+ * 等级差收益衰减：越级挑战有少量加成，长期刷低级地图收益骤减。
+ * 用于经验与银两（材料掉落不受影响），避免挂低级图刷级。
+ */
+export function rewardMultiplier(monsterLevel: number, playerLevel: number): number {
+  const diff = monsterLevel - playerLevel;
+  if (diff >= 0) return Math.min(1.2, 1 + diff * 0.03);
+  return Math.max(0.08, 1 + diff * 0.12);
+}
+
 export const uid = () =>
   `i${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
 
@@ -459,8 +469,9 @@ export function resolveCombat(
   const win = totalHp() <= 0 && hp > 0;
   const died = hp <= 0;
   const monster = monsters[0];
-  const exp = win ? monsters.reduce((sum, m) => sum + m.exp, 0) : 0;
-  const silver = win ? monsters.reduce((sum, m) => sum + m.silver, 0) : 0;
+  const rewardMult = rewardMultiplier(monster.level, fighter.level);
+  const exp = win ? monsters.reduce((sum, m) => sum + Math.round(m.exp * rewardMult), 0) : 0;
+  const silver = win ? monsters.reduce((sum, m) => sum + Math.round(m.silver * rewardMult), 0) : 0;
   const drops: EquipItem[] = [];
   const materials: Record<string, number> = {};
   if (win) {
@@ -599,6 +610,28 @@ export function questNeed(questId: string): number {
   return quest.objective.count;
 }
 
+/**
+ * 任务当前进度：
+ * - 收集类按「背包中实际持有的材料」计算（接了任务之前的材料同样算数）
+ * - 等级类按当前等级
+ * - 其余按任务进度
+ */
+export function questProgress(save: SaveGame, questId: string): number {
+  const quest = require_quest(questId);
+  if (!quest) return 0;
+  if (quest.objective.type === "collect") {
+    return save.player.materials[quest.objective.materialId] ?? 0;
+  }
+  if (quest.objective.type === "level") return save.player.level;
+  return save.quests.progress[questId] ?? 0;
+}
+
+/** 任务是否可交付 */
+export function questReady(save: SaveGame, questId: string): boolean {
+  if (!require_quest(questId)) return false;
+  return questProgress(save, questId) >= questNeed(questId);
+}
+
 /* ------------------------------ 材料 / 背包 ------------------------------ */
 
 export function addMaterials(player: Player, gained: Record<string, number>): Player {
@@ -655,9 +688,38 @@ export function itemScore(item: EquipItem): number {
   return Math.round(s.atk * 3 + s.def * 2 + s.agi * 1.5 + s.hp * 0.3 + s.mp * 0.2 + s.crit * 500 + s.lifesteal * 400);
 }
 
+/** 该装备是否比当前部位更好（含强化等级换算） */
+export function isUpgrade(player: Player, item: EquipItem): boolean {
+  const current = player.equipment[item.slot];
+  if (item.reqLevel > player.level) return false;
+  return itemScore(item) > (current ? itemScore(current) : 0);
+}
+
+export const EQUIP_SLOTS: EquipSlot[] = ["weapon", "head", "body", "hands", "feet", "accessory"];
+
+/** 一键装备：每个部位自动换上背包中最好的一件（只换更强且等级够的） */
+export function autoEquipBest(player: Player): { player: Player; equipped: string[] } {
+  let current = player;
+  const names: string[] = [];
+  for (const slot of EQUIP_SLOTS) {
+    const candidates = current.inventory.filter((i) => i.slot === slot && i.reqLevel <= current.level);
+    if (candidates.length === 0) continue;
+    const best = candidates.reduce((a, b) => (itemScore(b) > itemScore(a) ? b : a));
+    const equipped = current.equipment[slot];
+    if (equipped && itemScore(equipped) >= itemScore(best)) continue;
+    current = equipItem(current, best).player;
+    names.push(best.name);
+  }
+  return { player: current, equipped: names };
+}
+
 /* ------------------------------ 挂机与离线 ------------------------------ */
 
 export const IDLE_INTERVAL_MS = 5000;
+/** 离线结算：每场战斗耗时更长（在线 5 秒 → 离线 25 秒） */
+export const OFFLINE_INTERVAL_MS = 25000;
+/** 离线收益效率：经验与银两按 12% 结算（材料与装备照常） */
+export const OFFLINE_EFFICIENCY = 0.12;
 export const OFFLINE_CAP_MS = 12 * 3600 * 1000;
 
 export interface IdleSettleOptions {
@@ -667,11 +729,17 @@ export interface IdleSettleOptions {
   /** 是否记录详细日志 */
   verbose: boolean;
   maxBattles?: number;
+  /** 每场战斗耗时（默认在线 5 秒） */
+  intervalMs?: number;
+  /** 经验/银两效率（离线降低，默认 1） */
+  efficiency?: number;
 }
 
 export interface IdleSettleResult {
   player: Player;
   battles: number;
+  /** 击败敌人数量（含群怪） */
+  kills: number;
   exp: number;
   silver: number;
   drops: EquipItem[];
@@ -683,21 +751,25 @@ export interface IdleSettleResult {
 /** 挂机结算（可同时用于在线 tick 与离线补算） */
 export function idleSettle(options: IdleSettleOptions): IdleSettleResult {
   const map = MAP_BY_ID[options.mapId];
-  if (!map) {
-    return {
-      player: options.player,
-      battles: 0,
-      exp: 0,
-      silver: 0,
-      drops: [],
-      materials: {},
-      deaths: 0,
-      messages: [],
-    };
-  }
-  const total = Math.floor(options.elapsedMs / IDLE_INTERVAL_MS);
+  const empty: IdleSettleResult = {
+    player: options.player,
+    battles: 0,
+    kills: 0,
+    exp: 0,
+    silver: 0,
+    drops: [],
+    materials: {},
+    deaths: 0,
+    messages: [],
+  };
+  if (!map) return empty;
+
+  const intervalMs = options.intervalMs ?? IDLE_INTERVAL_MS;
+  const efficiency = options.efficiency ?? 1;
+  const total = Math.floor(options.elapsedMs / intervalMs);
   const battles = Math.min(total, options.maxBattles ?? total);
   let player = options.player;
+  let kills = 0;
   let exp = 0;
   let silver = 0;
   let deaths = 0;
@@ -728,8 +800,9 @@ export function idleSettle(options: IdleSettleOptions): IdleSettleResult {
       healThreshold: 0.45,
       verbose: false,
     });
-    exp += result.exp;
-    silver += result.silver;
+    if (result.win) kills += group.length;
+    exp += Math.round(result.exp * efficiency);
+    silver += Math.round(result.silver * efficiency);
     drops.push(...result.drops);
     for (const [id, count] of Object.entries(result.materials)) {
       materials[id] = (materials[id] ?? 0) + count;
@@ -749,14 +822,18 @@ export function idleSettle(options: IdleSettleOptions): IdleSettleResult {
   if (deaths > 0) messages.push(`挂机途中有 ${deaths} 次力竭，均已就地调息恢复。`);
   if (drops.length > 0) messages.push(`拾得装备 ${drops.length} 件。`);
 
-  return { player, battles, exp, silver, drops, materials, deaths, messages };
+  return { player, battles, kills, exp, silver, drops, materials, deaths, messages };
 }
 
 function sumPotions(player: Player): number {
   return Object.values(player.potions).reduce((a, b) => a + b, 0);
 }
 
-/** 离线结算：按时间戳补算，超过 12 小时的部分减半 */
+/**
+ * 离线结算：按时间戳补算。
+ * 离线节奏更慢（25 秒一场），经验与银两只按 12% 结算；
+ * 超过 12 小时的部分再减半，避免长时间离线一次性冲级。
+ */
 export function settleOffline(save: SaveGame, now: number): { save: SaveGame; report: IdleReport | null } {
   // 只取「上次结算时间」与「上次退出时间」的较晚者：
   // 不包含 createdAt，避免新档把离线时长算成 0
@@ -773,11 +850,14 @@ export function settleOffline(save: SaveGame, now: number): { save: SaveGame; re
     mapId: save.idle.config.mapId,
     elapsedMs: effective,
     verbose: false,
+    intervalMs: OFFLINE_INTERVAL_MS,
+    efficiency: OFFLINE_EFFICIENCY,
   });
 
   const report: IdleReport = {
     minutes: Math.round(elapsed / 60000),
     battles: result.battles,
+    kills: result.kills,
     exp: result.exp,
     silver: result.silver,
     drops: result.drops.map((d) => d.name),
@@ -795,7 +875,12 @@ export function settleOffline(save: SaveGame, now: number): { save: SaveGame; re
       ...save,
       player,
       idle: { ...save.idle, lastTick: now, report },
-      stats: { ...save.stats, battles: save.stats.battles + result.battles, deaths: save.stats.deaths + result.deaths },
+      stats: {
+        ...save.stats,
+        battles: save.stats.battles + result.battles,
+        kills: save.stats.kills + result.kills,
+        deaths: save.stats.deaths + result.deaths,
+      },
     },
     report,
   };
@@ -891,14 +976,39 @@ export function canLearnSkill(
   if ((player.skills[skill.id] ?? 0) > 0) return { ok: false, reason: "已学会" };
   if (player.silver < skill.cost.silver) return { ok: false, reason: "银两不足" };
   if (player.contribution < skill.cost.contribution) return { ok: false, reason: "门派贡献不足" };
+  if (player.exp < skill.cost.exp) return { ok: false, reason: `修为不足（需 ${skill.cost.exp} 经验）` };
   return { ok: true, reason: "" };
 }
 
-/** 技能升级消耗（按当前层数递增） */
+/** 技能升级消耗（按当前层数递增，同样消耗修为） */
 export function skillUpgradeCost(skill: SkillDef, level: number) {
   return {
     silver: Math.round(skill.cost.silver * 0.6 * level),
     contribution: Math.round((skill.cost.contribution || 20) * 0.5 * level),
+    exp: Math.round(skill.cost.exp * 0.3 * level),
+  };
+}
+
+/** 日常任务每日重置：把已完成的日常放回可接取状态 */
+export function resetDailies(save: SaveGame, today: string): SaveGame {
+  if (save.quests.dailyDate === today) return save;
+  const isDaily = (id: string) => {
+    const quest = require_quest(id);
+    return quest?.kind === "daily";
+  };
+  const progress = { ...save.quests.progress };
+  for (const id of Object.keys(progress)) {
+    if (isDaily(id)) delete progress[id];
+  }
+  return {
+    ...save,
+    quests: {
+      ...save.quests,
+      active: save.quests.active.filter((id) => !isDaily(id)),
+      completed: save.quests.completed.filter((id) => !isDaily(id)),
+      progress,
+      dailyDate: today,
+    },
   };
 }
 
@@ -913,7 +1023,7 @@ export function emptyIdle(mapId = "qingshi"): IdleState {
       collectCommon: false,
     },
     lastTick: Date.now(),
-    session: { startedAt: 0, battles: 0, exp: 0, silver: 0, drops: [], deaths: 0 },
+    session: { startedAt: 0, battles: 0, kills: 0, exp: 0, silver: 0, drops: [], deaths: 0 },
     log: [],
     report: null,
   };

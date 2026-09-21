@@ -22,6 +22,7 @@ import {
 import {
   enhancedStats,
   itemScore,
+  questProgress,
   realmOf,
   statsMarkdown,
   totalStats,
@@ -62,9 +63,9 @@ export function characterCard(save: SaveGame): string {
     "",
     statsMarkdown(stats),
     "",
-    `银两 **${num(p.silver)}** · 门派贡献 **${num(p.contribution)}** · 弟子 ${num(
-      save.stats.kills,
-    )} 战 · 秘境 ${num(save.stats.dungeonClears)} 次`,
+    `银两 **${num(p.silver)}** · 门派贡献 **${num(p.contribution)}** · 累计出战 **${num(
+      save.stats.battles,
+    )}** 场 · 击败 **${num(save.stats.kills)}** 人 · 秘境 **${num(save.stats.dungeonClears)}** 次`,
   ].join("\n");
 }
 
@@ -113,6 +114,14 @@ export function mapPanel(save: SaveGame, selectedMap: string): string {
 /** 战斗记录 */
 export function battlePanel(save: SaveGame, log: string[]): string {
   const map = MAP_BY_ID[save.idle.config.mapId];
+  const battleMap = MAP_BY_ID[save.idle.config.mapId] ?? MAP_BY_ID.qingshi;
+  const recommend = battleMap?.recommend;
+  const gap =
+    recommend && save.player.level < recommend[0]
+      ? "> [!WARNING] 此地怪物等级高于你，收益更高但风险也更大。"
+      : recommend && save.player.level > recommend[1] + 5
+        ? "> [!TIP] 此地怪物已远低于你的境界，经验与银两大幅衰减（材料照常掉落），建议换更高级的区域。"
+        : "";
   return [
     "### 战斗",
     "",
@@ -120,8 +129,12 @@ export function battlePanel(save: SaveGame, log: string[]): string {
       save.stats.kills,
     )}** 名敌人　力竭 **${num(save.stats.deaths)}** 次`,
     "",
+    gap,
+    gap ? "" : undefined,
     log.length > 0 ? log.join("\n\n") : "> 还没有战斗记录。点击下方按钮开始挑战。",
-  ].join("\n");
+  ]
+    .filter((line) => line !== undefined)
+    .join("\n");
 }
 
 /** 装备行描述 */
@@ -162,11 +175,19 @@ export function bagPanel(save: SaveGame): string {
   if (p.inventory.length === 0) {
     lines.push("> 背包空空如也，去战斗或秘境里找些装备吧。");
   } else {
-    lines.push("| # | 装备 | 需求 |", "| --- | --- | --- |");
-    p.inventory.slice(0, 30).forEach((item, index) => {
-      lines.push(`| ${index + 1} | ${equipLine(item, false)} | ${item.reqLevel} 级 |`);
+    const sorted = [...p.inventory].sort((a, b) => itemScore(b) - itemScore(a));
+    lines.push("| # | 装备 | 需求 | 对比当前 |", "| --- | --- | --- | --- |");
+    sorted.slice(0, 30).forEach((item, index) => {
+      const current = p.equipment[item.slot];
+      const diff = itemScore(item) - (current ? itemScore(current) : 0);
+      const mark = diff > 0 ? `==更强 +${diff}==` : diff < 0 ? `弱 ${Math.abs(diff)}` : "持平";
+      lines.push(
+        `| ${index + 1} | ${equipLine(item, false)} | ${item.reqLevel} 级 | ${mark} |`,
+      );
     });
-    if (p.inventory.length > 30) lines.push("", `> 其余 ${p.inventory.length - 30} 件已省略，可在下方下拉框中选择。`);
+    if (sorted.length > 30) {
+      lines.push("", `> 其余 ${sorted.length - 30} 件已省略，可在下方下拉框中选择（按评分排序）。`);
+    }
   }
 
   const materials = Object.entries(p.materials).filter(([, count]) => count > 0);
@@ -229,7 +250,7 @@ export function skillPanel(save: SaveGame): string {
     lines.push(
       `| ${skill.name} | ${skill.tier} | ${status} | ${skill.desc} | 银两 ${num(
         skill.cost.silver,
-      )} · 贡献 ${skill.cost.contribution} |`,
+      )} · 贡献 ${skill.cost.contribution} · 修为 ${num(skill.cost.exp)} |`,
     );
   }
   return lines.join("\n");
@@ -251,7 +272,7 @@ export function questPanel(save: SaveGame): string {
           : quest.objective.type === "dungeon"
             ? 1
             : quest.objective.count;
-      const done = save.quests.progress[id] ?? 0;
+      const done = questProgress(save, id);
       const progress = Math.min(done, need);
       const badge = progress >= need ? " ✅ **可交付**" : "";
       lines.push(
@@ -383,14 +404,16 @@ export function idlePanel(save: SaveGame): string {
   const idle = save.idle;
   const map = MAP_BY_ID[idle.config.mapId];
   const session = idle.session;
+  const recommend = map?.recommend;
   const lines = [
     "### 自动挂机",
     "",
-    `状态：${idle.config.enabled ? "**挂机中**（每 5 秒一场）" : "已停止"}　地点：**${map?.name ?? ""}**`,
+    `状态：${idle.config.enabled ? "**挂机中**（在线每 5 秒一场）" : "已停止"}　地点：**${map?.name ?? ""}**`,
     "",
     "| 本次挂机 | 数值 |",
     "| --- | --- |",
     `| 场次 | ${num(session.battles)} |`,
+    `| 击败 | ${num(session.kills ?? 0)} 人 |`,
     `| 经验 | ${num(session.exp)} |`,
     `| 银两 | ${num(session.silver)} |`,
     `| 拾取 | ${session.drops.length} 件 |`,
@@ -404,18 +427,35 @@ export function idlePanel(save: SaveGame): string {
     `- [${idle.config.fightElite ? "x" : " "}] 挑战精英怪（收益更高，风险更大）`,
     `- [${idle.config.collectCommon ? "x" : " "}] 拾取凡品装备（关闭则自动忽略）`,
     "",
-    "> [!TIP] 离线也会按同样速率结算，最多补算 12 小时（超出部分收益减半）。",
+    "> [!IMPORTANT] 离线结算规则",
+    "> - 离线节奏更慢：**每 25 秒一场**（在线为 5 秒一场）",
+    "> - 离线经验与银两只按 **12%** 结算（装备与材料照常掉落）",
+    "> - 最多补算 **12 小时**，超出部分再减半",
+    "> - 越级挑战有加成；长期停留在低级区域，经验与银两会大幅衰减",
   ];
+  if (recommend) {
+    if (save.player.level > recommend[1] + 5) {
+      lines.push(
+        "",
+        `> [!WARNING] 当前区域建议等级 ${recommend[0]}–${recommend[1]}，你已 ${save.player.level} 级，挂在此处收益很低。`,
+      );
+    } else if (save.player.level < recommend[0]) {
+      lines.push(
+        "",
+        `> [!WARNING] 当前区域建议等级 ${recommend[0]}–${recommend[1]}，你只有 ${save.player.level} 级，可能频繁力竭。`,
+      );
+    }
+  }
   if (idle.report) {
     lines.push(
       "",
       "#### 上次离线收益",
       "",
-      `离线 **${idle.report.minutes}** 分钟，战斗 **${num(idle.report.battles)}** 场，经验 **+${num(
-        idle.report.exp,
-      )}**，银两 **+${num(idle.report.silver)}**，拾取 ${idle.report.drops.length} 件，力竭 ${
-        idle.report.deaths
-      } 次。`,
+      `离线 **${idle.report.minutes}** 分钟，战斗 **${num(idle.report.battles)}** 场，击败 **${num(
+        idle.report.kills ?? 0,
+      )}** 人，经验 **+${num(idle.report.exp)}**，银两 **+${num(
+        idle.report.silver,
+      )}**，拾取 ${idle.report.drops.length} 件，力竭 ${idle.report.deaths} 次。`,
     );
     if (idle.report.drops.length > 0) {
       lines.push("", `拾得：${idle.report.drops.slice(0, 12).map((n) => `\`${n}\``).join(" ")}`);

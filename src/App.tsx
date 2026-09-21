@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, lazy, Suspense } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
@@ -36,7 +36,10 @@ import { UpdateDialog } from "./components/Dialogs/UpdateDialog";
 import { ShortcutsDialog } from "./components/Dialogs/ShortcutsDialog";
 import { AboutDialog } from "./components/Dialogs/AboutDialog";
 import { DungeonDialog } from "./components/Dialogs/DungeonDialog";
-import { WuxiaDialog } from "./wuxia/ui/WuxiaDialog";
+// 江湖玩法体积不小，按需加载（不打开就不下载）
+const WuxiaPanel = lazy(() =>
+  import("./wuxia/ui/WuxiaPanel").then((m) => ({ default: m.WuxiaPanel })),
+);
 import { useSettingsStore } from "./stores/settingsStore";
 import {
   displayName,
@@ -61,6 +64,7 @@ export default function App() {
   const doc = useAppStore((s) => s.docs.find((d) => d.id === s.activeId) ?? null);
   const viewMode = useAppStore((s) => s.viewMode);
   const outlineVisible = useAppStore((s) => s.outlineVisible);
+  const gameOpen = useAppStore((s) => s.gameOpen);
   const content = doc?.content ?? "";
   const rendered = useMarkdown(content, viewMode);
 
@@ -194,10 +198,20 @@ export default function App() {
       <TabBar />
 
       <div className="flex min-h-0 flex-1">
-        {doc && outlineVisible ? <OutlineSidebar previewRef={previewRef} /> : null}
+        {doc && outlineVisible && !gameOpen ? <OutlineSidebar previewRef={previewRef} /> : null}
 
         <div className="relative min-w-0 flex-1">
-          {!doc ? (
+          {gameOpen ? (
+            <Suspense
+              fallback={
+                <div className="flex h-full items-center justify-center text-[12px] text-muted">
+                  正在展开江湖……
+                </div>
+              }
+            >
+              <WuxiaPanel />
+            </Suspense>
+          ) : !doc ? (
             <WelcomeScreen />
           ) : viewMode === "preview" ? (
             livePreview ? (
@@ -230,7 +244,7 @@ export default function App() {
             />
           )}
 
-          {doc ? <SearchBar /> : null}
+          {doc && !gameOpen ? <SearchBar /> : null}
         </div>
       </div>
 
@@ -254,7 +268,6 @@ export default function App() {
       <ShortcutsDialog />
       <AboutDialog />
       <DungeonDialog />
-      <WuxiaDialog />
     </div>
   );
 }

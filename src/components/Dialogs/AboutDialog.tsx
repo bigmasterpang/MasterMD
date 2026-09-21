@@ -3,6 +3,7 @@ import { Modal, Button } from "../common/Modal";
 import { useDialogStore } from "../../stores/dialogStore";
 import { useUpdateStore } from "../../stores/updateStore";
 import { useDungeonStore } from "../../stores/dungeonStore";
+import { useAppStore } from "../../stores/appStore";
 import { openReleasesPage, PORTAL_URL } from "../../utils/updateCheck";
 import {
   APP_NAME,
@@ -247,10 +248,9 @@ export function AboutDialog() {
                   <button
                     type="button"
                     onClick={() => {
-                      void import("../../wuxia/store").then((m) => {
-                        m.useWuxiaStore.getState().openPanel();
-                        close();
-                      });
+                      useAppStore.getState().openGame();
+                      void import("../../wuxia/store").then((m) => m.useWuxiaStore.getState().ensureLoaded());
+                      close();
                     }}
                     className="rounded-md border border-line bg-elevated px-2.5 py-1 text-[11px] font-semibold text-fg hover:bg-hover"
                   >

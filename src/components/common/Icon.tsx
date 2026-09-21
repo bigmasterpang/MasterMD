@@ -44,6 +44,7 @@ export type IconName =
   | "image"
   | "case-sensitive"
   | "keyboard"
+  | "sword"
   | "replace"
   | "arrow-up-down"
   | "info"
@@ -197,6 +198,13 @@ const PATHS: Record<IconName, string[]> = {
     "M9 14h6",
   ],
   loader: ["M12 2v4", "M12 18v4", "M4.93 4.93l2.83 2.83", "M16.24 16.24l2.83 2.83", "M2 12h4", "M18 12h4", "M4.93 19.07l2.83-2.83", "M16.24 7.76l2.83-2.83"],
+  sword: [
+    "M14.5 17.5 3 6V3h3l11.5 11.5",
+    "M13 19l6-6",
+    "M16 16l4 4",
+    "M19 21l2-2",
+    "M6.5 6.5l2-2",
+  ],
 };
 
 export interface IconProps extends Omit<SVGProps<SVGSVGElement>, "name"> {

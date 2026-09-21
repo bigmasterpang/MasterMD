@@ -59,6 +59,8 @@ interface AppStore {
   recentFiles: string[];
   /** 编辑区与预览区滚动同步开关 */
   syncScroll: boolean;
+  /** 《Markdown 江湖》以独立标签页的形式打开（与文档标签并列） */
+  gameOpen: boolean;
 
   setViewMode: (mode: ViewMode) => void;
   cycleViewMode: () => void;
@@ -69,6 +71,8 @@ interface AppStore {
   setSearchCaseSensitive: (value: boolean) => void;
   setRecentFiles: (files: string[]) => void;
   toggleSyncScroll: () => void;
+  openGame: () => void;
+  closeGame: () => void;
 
   addDoc: (doc: DocState) => void;
   activateDoc: (id: string) => void;
@@ -99,6 +103,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
   searchCaseSensitive: false,
   recentFiles: [],
   syncScroll: true,
+  gameOpen: false,
 
   setViewMode: (mode) => set({ viewMode: mode }),
 
@@ -117,12 +122,16 @@ export const useAppStore = create<AppStore>((set, get) => ({
   setRecentFiles: (files) => set({ recentFiles: files }),
   toggleSyncScroll: () => set((s) => ({ syncScroll: !s.syncScroll })),
 
+  openGame: () => set({ gameOpen: true, searchVisible: false, searchQuery: "" }),
+  closeGame: () => set({ gameOpen: false }),
+
   addDoc: (doc) =>
-    set((s) => ({ docs: [...s.docs, doc], activeId: doc.id })),
+    set((s) => ({ docs: [...s.docs, doc], activeId: doc.id, gameOpen: false })),
 
   activateDoc: (id) => {
-    if (get().activeId === id) return;
-    set({ activeId: id, searchVisible: false, searchQuery: "" });
+    const { activeId, gameOpen } = get();
+    if (activeId === id && !gameOpen) return;
+    set({ activeId: id, searchVisible: false, searchQuery: "", gameOpen: false });
   },
 
   closeDoc: (id) => {
