@@ -97,6 +97,7 @@ interface AppStore {
   setActivePane: (pane: 0 | 1) => void;
   setPaneRatio: (ratio: number) => void;
   moveDocToPane: (id: string, targetPane: 0 | 1) => void;
+  moveDoc: (id: string, targetPane: 0 | 1, targetIndex?: number) => void;
 
   addDoc: (doc: DocState) => void;
   activateDoc: (id: string, targetPane?: 0 | 1) => void;
@@ -206,20 +207,49 @@ export const useAppStore = create<AppStore>((set, get) => ({
     })),
 
   moveDocToPane: (id, targetPane) => {
+    get().moveDoc(id, targetPane);
+  },
+
+  moveDoc: (id, targetPane, targetIndex) => {
     const { docs, activeIds, layout } = get();
-    const target = docs.find((d) => d.id === id);
-    if (!target || target.pane === targetPane) return;
-    const oldPane = target.pane ?? 0;
+    const targetDoc = docs.find((d) => d.id === id);
+    if (!targetDoc) return;
+    const fromPane = (targetDoc.pane ?? 0) as 0 | 1;
 
-    let nextDocs = docs.map((d) => (d.id === id ? { ...d, pane: targetPane } : d));
+    // 1. 同一分栏内调整顺序
+    if (fromPane === targetPane) {
+      const paneDocs = docs.filter((d) => (d.pane ?? 0) === fromPane);
+      const otherDocs = docs.filter((d) => (d.pane ?? 0) !== fromPane);
+      const fromIdx = paneDocs.findIndex((d) => d.id === id);
+      if (fromIdx < 0) return;
 
-    const remainingOld = nextDocs.filter((d) => (d.pane ?? 0) === oldPane);
+      const currentList = [...paneDocs];
+      const [moved] = currentList.splice(fromIdx, 1);
 
-    // 如果某一栏只剩最后一个标签，拖动后，双栏显示自动变单栏
-    if (remainingOld.length === 0) {
-      nextDocs = nextDocs.map((d) => ({ ...d, pane: 0 as const }));
+      let destIdx = targetIndex ?? currentList.length;
+      if (destIdx > fromIdx) destIdx -= 1;
+      destIdx = Math.max(0, Math.min(currentList.length, destIdx));
+      currentList.splice(destIdx, 0, moved);
+
+      // 保持左栏在前，右栏在后
+      const nextDocs = fromPane === 0 ? [...currentList, ...otherDocs] : [...otherDocs, ...currentList];
+      set({ docs: nextDocs });
+      return;
+    }
+
+    // 2. 跨分栏移动
+    const srcDocs = docs.filter((d) => (d.pane ?? 0) === fromPane && d.id !== id);
+    const dstDocs = docs.filter((d) => (d.pane ?? 0) === targetPane);
+    const movedDoc: DocState = { ...targetDoc, pane: targetPane };
+
+    const insertIdx = Math.max(0, Math.min(dstDocs.length, targetIndex ?? dstDocs.length));
+    dstDocs.splice(insertIdx, 0, movedDoc);
+
+    // 关键规则：如果源分栏只剩最后一个标签，拖动后，双栏显示自动变单栏
+    if (srcDocs.length === 0) {
+      const unifiedDocs = dstDocs.map((d) => ({ ...d, pane: 0 as const }));
       set({
-        docs: nextDocs,
+        docs: unifiedDocs,
         activeIds: [id, null],
         activeId: id,
         layout: { ...layout, split: false, activePane: 0 },
@@ -227,18 +257,21 @@ export const useAppStore = create<AppStore>((set, get) => ({
       return;
     }
 
-    let nextActiveOld = activeIds[oldPane];
-    if (activeIds[oldPane] === id) {
-      nextActiveOld = remainingOld.length > 0 ? remainingOld[0].id : null;
+    // 源栏还有其他标签：若原激活标签被移走，激活源栏剩余的第一个标签
+    let nextActiveForSrc = activeIds[fromPane];
+    if (activeIds[fromPane] === id) {
+      nextActiveForSrc = srcDocs[0].id;
     }
 
     const nextActiveIds: [string | null, string | null] = [
-      targetPane === 0 ? id : nextActiveOld,
-      targetPane === 1 ? id : nextActiveOld,
+      targetPane === 0 ? id : nextActiveForSrc,
+      targetPane === 1 ? id : nextActiveForSrc,
     ];
 
+    const finalDocs = targetPane === 0 ? [...dstDocs, ...srcDocs] : [...srcDocs, ...dstDocs];
+
     set({
-      docs: nextDocs,
+      docs: finalDocs,
       activeIds: nextActiveIds,
       activeId: id,
       layout: { ...layout, split: true, activePane: targetPane },
@@ -387,17 +420,17 @@ export const useAppStore = create<AppStore>((set, get) => ({
   reorderDocs: (pane, fromIndex, toIndex) => {
     const { docs } = get();
     const paneDocs = docs.filter((d) => (d.pane ?? 0) === pane);
-    const otherDocs = docs.filter((d) => (d.pane ?? 0) !== pane);
     if (
       fromIndex < 0 ||
       fromIndex >= paneDocs.length ||
       toIndex < 0 ||
-      toIndex >= paneDocs.length
+      toIndex >= paneDocs.length ||
+      fromIndex === toIndex
     )
       return;
-    const [moved] = paneDocs.splice(fromIndex, 1);
-    paneDocs.splice(toIndex, 0, moved);
-    set({ docs: [...paneDocs, ...otherDocs] });
+    const targetDoc = paneDocs[fromIndex];
+    if (!targetDoc) return;
+    get().moveDoc(targetDoc.id, pane, toIndex);
   },
 
   patchActive: (patch) =>

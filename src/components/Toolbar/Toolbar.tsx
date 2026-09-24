@@ -41,7 +41,7 @@ import {
   saveActive,
   saveActiveAs,
 } from "../../utils/fileActions";
-import { fileName, isMarkdownPath } from "../../utils/filePath";
+import { fileName, isMarkdownDoc } from "../../utils/filePath";
 import { openPath as openWithSystem } from "@tauri-apps/plugin-opener";
 import { parseDoc } from "../../utils/markdown";
 
@@ -104,8 +104,8 @@ export function Toolbar({ previewRef, isDark }: ToolbarProps) {
 
   const hasDoc = Boolean(doc);
   const editable = viewMode !== "preview" && Boolean(doc) && !doc?.readOnly;
-  /** 非 Markdown 文档（代码/纯文本）隐藏 Markdown 专属操作 */
-  const isMarkdown = !doc?.filePath || isMarkdownPath(doc.filePath);
+  /** 非 Markdown 文档（新建空白文档/代码/纯文本）屏蔽所有 Markdown 专属操作 */
+  const isMarkdown = isMarkdownDoc(doc);
 
   const cycleTheme = () => {
     const idx = THEME_ORDER.indexOf(theme);
@@ -302,54 +302,58 @@ export function Toolbar({ previewRef, isDark }: ToolbarProps) {
 
       <Divider />
 
-      <div className="flex items-center gap-0.5 rounded-md bg-app p-0.5">
-        {VIEW_ITEMS.map((item) => (
-          <ToolButton
-            key={item.mode}
-            icon={item.icon}
-            label={item.label}
-            active={viewMode === item.mode}
-            disabled={!hasDoc || !isMarkdown}
-            onClick={() => useAppStore.getState().setViewMode(item.mode)}
+      {isMarkdown ? (
+        <>
+          <div className="flex items-center gap-0.5 rounded-md bg-app p-0.5">
+            {VIEW_ITEMS.map((item) => (
+              <ToolButton
+                key={item.mode}
+                icon={item.icon}
+                label={item.label}
+                active={viewMode === item.mode}
+                disabled={!hasDoc}
+                onClick={() => useAppStore.getState().setViewMode(item.mode)}
+              />
+            ))}
+          </div>
+
+          <Divider />
+
+          <DropdownMenu
+            icon="file-text"
+            label="标题"
+            title="标题级别"
+            groups={headingMenu}
+            disabled={!editable}
           />
-        ))}
-      </div>
+          <DropdownMenu
+            icon="list"
+            label="列表"
+            title="列表与提示块"
+            groups={listMenu}
+            disabled={!editable}
+            width={230}
+          />
+          <DropdownMenu
+            icon="plus"
+            label="插入"
+            title="插入元素"
+            groups={insertMenu}
+            disabled={!editable}
+            width={230}
+          />
+          <DropdownMenu
+            icon="bold"
+            label="格式"
+            title="文本格式"
+            groups={formatMenu}
+            disabled={!editable}
+            width={230}
+          />
 
-      <Divider />
-
-      <DropdownMenu
-        icon="file-text"
-        label="标题"
-        title="标题级别"
-        groups={headingMenu}
-        disabled={!editable || !isMarkdown}
-      />
-      <DropdownMenu
-        icon="list"
-        label="列表"
-        title="列表与提示块"
-        groups={listMenu}
-        disabled={!editable || !isMarkdown}
-        width={230}
-      />
-      <DropdownMenu
-        icon="plus"
-        label="插入"
-        title="插入元素"
-        groups={insertMenu}
-        disabled={!editable || !isMarkdown}
-        width={230}
-      />
-      <DropdownMenu
-        icon="bold"
-        label="格式"
-        title="文本格式"
-        groups={formatMenu}
-        disabled={!editable || !isMarkdown}
-        width={230}
-      />
-
-      <Divider />
+          <Divider />
+        </>
+      ) : null}
 
       <ToolButton
         icon="search"
@@ -358,13 +362,13 @@ export function Toolbar({ previewRef, isDark }: ToolbarProps) {
         active={searchVisible && !replaceVisible}
         onClick={() => useSearchStore.getState().open(false)}
       />
-        <ToolButton
-          icon="replace"
-          label="替换 (Ctrl+H)"
-          disabled={!hasDoc}
-          active={searchVisible && replaceVisible}
-          onClick={() => useSearchStore.getState().open(true)}
-        />
+      <ToolButton
+        icon="replace"
+        label="替换 (Ctrl+H)"
+        disabled={!hasDoc}
+        active={searchVisible && replaceVisible}
+        onClick={() => useSearchStore.getState().open(true)}
+      />
       <ToolButton
         icon="sidebar"
         label="侧栏 (文件与大纲)"
@@ -372,12 +376,12 @@ export function Toolbar({ previewRef, isDark }: ToolbarProps) {
         onClick={() => useAppStore.getState().toggleOutline()}
       />
       {viewMode === "split" && isMarkdown ? (
-          <ToolButton
-            icon="arrow-up-down"
-            label={syncScroll ? "滚动同步：开" : "滚动同步：关"}
-            active={syncScroll}
-            onClick={() => useAppStore.getState().toggleSyncScroll()}
-          />
+        <ToolButton
+          icon="arrow-up-down"
+          label={syncScroll ? "滚动同步：开" : "滚动同步：关"}
+          active={syncScroll}
+          onClick={() => useAppStore.getState().toggleSyncScroll()}
+        />
       ) : null}
 
       <div className="flex-1" />
@@ -391,15 +395,17 @@ export function Toolbar({ previewRef, isDark }: ToolbarProps) {
           if (path) void openWithSystem(path);
         }}
       />
-      <DropdownMenu
-        icon="download"
-        label="导出"
-        title="导出文档"
-        groups={exportMenu}
-        disabled={!hasDoc || !isMarkdown}
-        align="right"
-        width={200}
-      />
+      {isMarkdown ? (
+        <DropdownMenu
+          icon="download"
+          label="导出"
+          title="导出文档"
+          groups={exportMenu}
+          disabled={!hasDoc}
+          align="right"
+          width={200}
+        />
+      ) : null}
       <ToolButton
         icon={THEME_META[theme].icon}
         label={`${THEME_META[theme].label}（点击切换）`}

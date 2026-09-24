@@ -34,6 +34,38 @@ export function isMarkdownPath(p: string): boolean {
   return MARKDOWN_EXTENSIONS.includes(extName(p));
 }
 
+/**
+ * 判断文档是否应作为 Markdown 处理。
+ * - 未保存的空白文档（docType === 'blank' 且无 filePath）明确不是 Markdown。
+ * - 有路径的文件根据扩展名判断。
+ * - 其余未保存文档默认为 Markdown。
+ */
+export function isMarkdownDoc(doc: { filePath: string | null; docType?: "markdown" | "blank" } | null | undefined): boolean {
+  if (!doc) return false;
+  if (doc.docType === "blank" && !doc.filePath) return false;
+  if (doc.filePath) return isMarkdownPath(doc.filePath);
+  return doc.docType !== "blank";
+}
+
+/** 获取文档基础名称（不含同名编号） */
+export function getDocBaseName(doc: { filePath: string | null; docType?: "markdown" | "blank" }): string {
+  if (doc.filePath) return fileName(doc.filePath);
+  return doc.docType === "blank" ? "未命名" : "未命名.md";
+}
+
+/** 获取文档展示标题。如果有多个同名文档，自动加上编号区分，如 README.md (1), README.md (2) */
+export function getDocTitle(
+  doc: { id: string; filePath: string | null; docType?: "markdown" | "blank" },
+  allDocs: Array<{ id: string; filePath: string | null; docType?: "markdown" | "blank" }>,
+): string {
+  const base = getDocBaseName(doc);
+  const duplicates = allDocs.filter((d) => getDocBaseName(d) === base);
+  if (duplicates.length <= 1) return base;
+  const idx = duplicates.findIndex((d) => d.id === doc.id);
+  const num = idx >= 0 ? idx + 1 : 1;
+  return `${base} (${num})`;
+}
+
 /** 文档类别（未保存的新文档按 Markdown 处理） */
 export function docKindOf(p: string | null | undefined): DocKind {
   if (!p) return "markdown";

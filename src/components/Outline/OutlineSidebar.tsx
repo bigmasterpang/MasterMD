@@ -3,7 +3,7 @@ import { Icon, type IconName } from "../common/Icon";
 import { useAppStore } from "../../stores/appStore";
 import { useSettingsStore } from "../../stores/settingsStore";
 import { scrollToLine } from "../../utils/editorCommands";
-import { isMarkdownPath } from "../../utils/filePath";
+import { isMarkdownDoc } from "../../utils/filePath";
 import { analyzeSymbols, navSupported, type NavItem, type NavKind } from "../../utils/outline";
 import type { HeadingItem } from "../../types";
 
@@ -40,7 +40,7 @@ export function OutlineSidebar({ previewRef, standalone = false }: Props) {
   const [activeId, setActiveId] = useState<string | null>(null);
   const listRef = useRef<HTMLDivElement>(null);
 
-  const isMarkdown = !doc?.filePath || isMarkdownPath(doc.filePath);
+  const isMarkdown = isMarkdownDoc(doc);
   const hasSymbolSupport = Boolean(doc?.filePath && navSupported(doc.filePath));
 
   // 当前实际采用的导航类型

@@ -39,7 +39,7 @@ const WuxiaPanel = lazy(() =>
 );
 import { useSettingsStore } from "./stores/settingsStore";
 import { displayName, loadRecentFiles, openDroppedPaths, openPath, saveDoc } from "./utils/fileActions";
-import { isMarkdownPath } from "./utils/filePath";
+import { isMarkdownDoc } from "./utils/filePath";
 import { flushUiState, isTauri, restoreSession, startSessionTracking } from "./utils/persist";
 
 let startupHandled = false;
@@ -57,8 +57,8 @@ export default function App() {
   const outlineVisible = useAppStore((s) => s.outlineVisible);
   const gameOpen = useAppStore((s) => s.gameOpen);
   const content = doc?.content ?? "";
-  /** 非 Markdown 文件（代码/纯文本）只提供源码编辑 */
-  const isMarkdown = !doc?.filePath || isMarkdownPath(doc.filePath);
+  /** 非 Markdown 文件（新建空白文档/代码/纯文本）只提供源码编辑 */
+  const isMarkdown = isMarkdownDoc(doc);
   const rendered = useMarkdown(isMarkdown ? content : "", viewMode);
 
   const previewRef = useRef<HTMLDivElement>(null);

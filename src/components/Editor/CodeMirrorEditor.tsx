@@ -27,7 +27,7 @@ import {
 } from "@codemirror/autocomplete";
 import { search } from "@codemirror/search";
 import { useAppStore, getDocById } from "../../stores/appStore";
-import { isMarkdownPath } from "../../utils/filePath";
+import { isMarkdownDoc, isMarkdownPath } from "../../utils/filePath";
 import { useSearchStore } from "../../stores/searchStore";
 import { useSettingsStore } from "../../stores/settingsStore";
 import { registerEditor } from "../../utils/editorBridge";
@@ -57,7 +57,7 @@ function markdownSupport(): Extension {
 
 function buildExtensions(isDark: boolean, doc: ReturnType<typeof getDocById>): Extension[] {
   const settings = useSettingsStore.getState();
-  const isMd = !doc?.filePath || isMarkdownPath(doc.filePath);
+  const isMd = isMarkdownDoc(doc);
   return [
     lineNumberCompartment.of(settings.showLineNumbers ? lineNumbers() : []),
     highlightActiveLine(),
@@ -183,8 +183,8 @@ export function CodeMirrorEditor({ docId, isDark }: Props) {
           },
           paste: (event) => {
             // 图片粘贴仅用于 Markdown 文档
-            const path = getDocById(docId)?.filePath ?? "";
-            if (path && !isMarkdownPath(path)) return false;
+            const currentDoc = getDocById(docId);
+            if (!isMarkdownDoc(currentDoc)) return false;
             const hasImage = Array.from(event.clipboardData?.items ?? []).some(
               (item) => item.type.startsWith("image/"),
             );

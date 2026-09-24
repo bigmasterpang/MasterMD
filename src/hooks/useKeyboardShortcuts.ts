@@ -2,7 +2,7 @@ import { useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { getActiveDoc, useAppStore } from "../stores/appStore";
-import { isMarkdownPath } from "../utils/filePath";
+import { getDocTitle, isMarkdownDoc } from "../utils/filePath";
 import { useDialogStore } from "../stores/dialogStore";
 import { useSearchStore } from "../stores/searchStore";
 import { useSettingsStore } from "../stores/settingsStore";
@@ -74,7 +74,7 @@ export function useKeyboardShortcuts(): void {
         case "viewMode": {
           // 非 Markdown 文档固定源码模式，不参与视图切换
           const active = getActiveDoc();
-          if (!active?.filePath || isMarkdownPath(active.filePath)) {
+          if (isMarkdownDoc(active)) {
             useAppStore.getState().cycleViewMode();
           }
           break;
@@ -96,11 +96,23 @@ export function useKeyboardShortcuts(): void {
       }
     };
 
-    /** 编辑器类快捷键仅在可编辑状态下生效 */
+    /** 编辑器类快捷键在可编辑状态下生效 */
     const editorReady = () => {
       const state = useAppStore.getState();
       const doc = getActiveDoc();
       return state.viewMode !== "preview" && Boolean(doc) && !doc?.readOnly;
+    };
+
+    /** Markdown 专属快捷键仅在 Markdown 文档下生效 */
+    const markdownReady = () => {
+      const state = useAppStore.getState();
+      const doc = getActiveDoc();
+      return (
+        state.viewMode !== "preview" &&
+        Boolean(doc) &&
+        !doc?.readOnly &&
+        isMarkdownDoc(doc)
+      );
     };
 
     const handler = (event: KeyboardEvent) => {
@@ -208,29 +220,30 @@ export function useKeyboardShortcuts(): void {
         event.preventDefault();
         const currentActiveId = useAppStore.getState().activeId;
         if (currentActiveId) {
-          useAppStore.getState().moveDocToPane(currentActiveId, event.key === "ArrowLeft" ? 0 : 1);
+          useAppStore.getState().moveDoc(currentActiveId, event.key === "ArrowLeft" ? 0 : 1);
         }
         return;
       }
 
       // ---------------- 编辑类快捷键 ----------------
       const editable = editorReady();
+      const mdEditable = markdownReady();
 
       // 标题：Ctrl+1..6 设置级别，Ctrl+0 取消标题
-      if (editable && !event.shiftKey && !event.altKey && /^[0-6]$/.test(key)) {
+      if (mdEditable && !event.shiftKey && !event.altKey && /^[0-6]$/.test(key)) {
         event.preventDefault();
         setHeading(key === "0" ? 0 : Number(key));
         return;
       }
       // 标题升降级：Ctrl+Alt+↑ / ↓
-      if (editable && event.altKey && (event.key === "ArrowUp" || event.key === "ArrowDown")) {
+      if (mdEditable && event.altKey && (event.key === "ArrowUp" || event.key === "ArrowDown")) {
         event.preventDefault();
         shiftHeading(event.key === "ArrowUp" ? -1 : 1);
         return;
       }
       // 上标 / 下标 / 下划线 / 删除线：Alt+Shift+…
       // （Shift 会改变 event.key，例如 = 变 +、- 变 _，所以用 code 判断）
-      if (editable && event.altKey && event.shiftKey) {
+      if (mdEditable && event.altKey && event.shiftKey) {
         if (code === "Equal") {
           event.preventDefault();
           toggleSuperscript();
@@ -254,7 +267,7 @@ export function useKeyboardShortcuts(): void {
       }
       // 列表：Ctrl+Shift+7/8/9；高亮：Ctrl+Shift+M
       // （同样受 Shift 影响 event.key，用 code 判断）
-      if (editable && !event.altKey && event.shiftKey) {
+      if (mdEditable && !event.altKey && event.shiftKey) {
         if (code === "Digit7") {
           event.preventDefault();
           toggleList("ordered");
@@ -288,13 +301,13 @@ export function useKeyboardShortcuts(): void {
           break;
         }
         case "b": {
-          if (!editable || event.shiftKey || event.altKey) break;
+          if (!mdEditable || event.shiftKey || event.altKey) break;
           event.preventDefault();
           toggleBold();
           break;
         }
         case "i": {
-          if (!editable || event.altKey) break;
+          if (!mdEditable || event.altKey) break;
           event.preventDefault();
           if (event.shiftKey) {
             void import("../components/Toolbar/Toolbar").then((m) => m.promptInsert("image"));
@@ -304,14 +317,19 @@ export function useKeyboardShortcuts(): void {
           break;
         }
         case "k": {
-          if (!editable || event.altKey) break;
-          event.preventDefault();
-          if (event.shiftKey) deleteLines();
-          else void import("../components/Toolbar/Toolbar").then((m) => m.promptInsert("link"));
+          if (event.shiftKey) {
+            if (!editable) break;
+            event.preventDefault();
+            deleteLines();
+          } else {
+            if (!mdEditable || event.altKey) break;
+            event.preventDefault();
+            void import("../components/Toolbar/Toolbar").then((m) => m.promptInsert("link"));
+          }
           break;
         }
         case "`": {
-          if (!editable || event.shiftKey) break;
+          if (!mdEditable || event.shiftKey) break;
           event.preventDefault();
           toggleInlineCode();
           break;
@@ -330,37 +348,37 @@ export function useKeyboardShortcuts(): void {
           break;
         }
         case "q": {
-          if (!event.shiftKey || !editable) break;
+          if (!event.shiftKey || !mdEditable) break;
           event.preventDefault();
           toggleQuote();
           break;
         }
         case "l": {
-          if (!event.shiftKey || !editable) break;
+          if (!event.shiftKey || !mdEditable) break;
           event.preventDefault();
           insertCallout("note");
           break;
         }
         case "c": {
-          if (!event.shiftKey || !editable) break;
+          if (!event.shiftKey || !mdEditable) break;
           event.preventDefault();
           insertCodeBlock();
           break;
         }
         case "t": {
-          if (!event.shiftKey || !editable) break;
+          if (!event.shiftKey || !mdEditable) break;
           event.preventDefault();
           insertTable(3, 3);
           break;
         }
         case "h": {
-          if (!event.shiftKey || !editable) break;
+          if (!event.shiftKey || !mdEditable) break;
           event.preventDefault();
           insertHorizontalRule();
           break;
         }
         case "o": {
-          if (!event.shiftKey || !editable) break;
+          if (!event.shiftKey || !mdEditable) break;
           event.preventDefault();
           insertToc();
           break;
@@ -398,7 +416,8 @@ export function useKeyboardShortcuts(): void {
 /** 监听当前文档变化，更新窗口标题 */
 export function useWindowTitle(): void {
   const doc = useAppStore((s) => s.docs.find((d) => d.id === s.activeId) ?? null);
-  const name = doc?.filePath ? doc.filePath.split(/[\\/]/).pop() || "未命名" : "未命名";
+  const docs = useAppStore((s) => s.docs);
+  const name = doc ? getDocTitle(doc, docs) : "未命名";
   const title = doc ? `${doc.isDirty ? "● " : ""}${name} - ${APP_NAME}` : APP_NAME;
 
   useEffect(() => {

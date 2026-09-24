@@ -8,8 +8,9 @@ import { SearchBar } from "../SearchBar/SearchBar";
 import { Icon } from "../common/Icon";
 import { useMarkdown, type MarkdownResult } from "../../hooks/useMarkdown";
 import { useAppStore } from "../../stores/appStore";
-import { isMarkdownPath } from "../../utils/filePath";
+import { isMarkdownDoc } from "../../utils/filePath";
 import { REALTIME_PREVIEW_LIMIT } from "../../utils/constants";
+import { useTabDragStore } from "../../stores/tabDragStore";
 
 interface DocViewProps {
   docId: string | null;
@@ -23,9 +24,10 @@ export function DocView({ docId, pane, isDark, previewRef }: DocViewProps) {
   const viewMode = useAppStore((s) => s.viewMode);
   const layout = useAppStore((s) => s.layout);
   const activePane = layout.activePane;
+  const dragStore = useTabDragStore();
 
   const content = doc?.content ?? "";
-  const isMarkdown = !doc?.filePath || isMarkdownPath(doc.filePath);
+  const isMarkdown = isMarkdownDoc(doc);
   const rendered = useMarkdown(isMarkdown ? content : "", viewMode);
   const lineCount = doc ? doc.content.split("\n").length : 0;
   const livePreview = content.length <= REALTIME_PREVIEW_LIMIT;
@@ -103,6 +105,7 @@ export function DocView({ docId, pane, isDark, previewRef }: DocViewProps) {
   return (
     <div
       ref={viewRef}
+      data-pane-viewport={pane}
       onDragOver={handleDragOver}
       onDragLeave={handleDragLeave}
       onDrop={handleDrop}
@@ -170,11 +173,9 @@ export function DocView({ docId, pane, isDark, previewRef }: DocViewProps) {
       </div>
 
       {/* 拖动标签分栏提示区 */}
-      {dropZone ? (
+      {(dropZone || (dragStore.isDragging && dragStore.targetPane === pane && dragStore.fromPane !== pane)) ? (
         <div
-          className={`pointer-events-none absolute bottom-0 top-0 z-50 flex items-center justify-center border-2 border-dashed border-accent bg-accent/15 backdrop-blur-[1px] transition-all ${
-            layout.split ? "inset-0" : dropZone === "left" ? "left-0 w-1/2" : "right-0 w-1/2"
-          }`}
+          className="pointer-events-none absolute bottom-0 top-0 inset-0 z-50 flex items-center justify-center border-2 border-dashed border-accent bg-accent/15 backdrop-blur-[1px] transition-all"
         >
           <div className="flex items-center gap-2 rounded-lg bg-elevated/95 px-4 py-2 text-[13px] font-semibold text-accent shadow-lg border border-accent/40">
             <Icon name="columns" size={16} />
