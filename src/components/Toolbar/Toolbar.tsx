@@ -366,10 +366,9 @@ export function Toolbar({ previewRef, isDark }: ToolbarProps) {
           onClick={() => useSearchStore.getState().open(true)}
         />
       <ToolButton
-        icon="list"
-        label="大纲侧栏"
+        icon="sidebar"
+        label="侧栏 (文件与大纲)"
         active={outlineVisible}
-        disabled={!isMarkdown}
         onClick={() => useAppStore.getState().toggleOutline()}
       />
       {viewMode === "split" && isMarkdown ? (

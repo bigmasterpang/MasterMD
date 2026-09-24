@@ -68,6 +68,17 @@ export interface DocState {
   frontMatterRaw: string | null;
   /** 编辑器滚动位置（切换标签时恢复） */
   scrollTop: number;
+  /** 所属分栏：0（左栏/默认），1（右栏） */
+  pane: 0 | 1;
+  /** 新建文档类型：markdown 或 blank（空白文档保存时由用户指定扩展名） */
+  docType?: "markdown" | "blank";
+}
+
+/** 双栏文档布局状态 */
+export interface LayoutState {
+  split: boolean;
+  activePane: 0 | 1;
+  ratio: number;
 }
 
 /** 可自定义的快捷键 */

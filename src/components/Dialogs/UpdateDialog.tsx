@@ -25,13 +25,16 @@ export function UpdateDialog() {
 
   const canInstall = Boolean(info?.downloadUrl);
   const percent = Math.round(progress * 100);
-  /** 安装包走安装向导，便携版直接替换重启 */
-  const isInstaller = /setup\.exe$/i.test(info?.filename ?? "");
+  /** 是否为已安装版本（走静默升级）或历史未打标记但为 setup.exe 的安装包 */
+  const isInstalled = info?.installKind === "installed";
+  const isLegacyInstaller = !isInstalled && /setup\.exe$/i.test(info?.filename ?? "");
 
   const title = error
     ? "更新失败"
     : restarting
-      ? "正在重启到新版本"
+      ? isInstalled
+        ? "正在静默升级并重启"
+        : "正在重启到新版本"
       : downloading
         ? "正在下载更新"
         : info?.hasUpdate
@@ -66,7 +69,14 @@ export function UpdateDialog() {
       >
         打开发布页面
       </Button>
-      {isInstaller ? (
+      {isInstalled ? (
+        <Button
+          variant="primary"
+          onClick={() => void useUpdateStore.getState().applyInstallerUpdate()}
+        >
+          {installed ? "再次执行静默升级" : "静默升级并重启"}
+        </Button>
+      ) : isLegacyInstaller ? (
         <Button variant="primary" onClick={() => void useUpdateStore.getState().runInstaller()}>
           {installed ? "再次运行安装包" : "运行安装包"}
         </Button>
@@ -137,17 +147,28 @@ export function UpdateDialog() {
             </span>
           </div>
           <div className="text-[11px] text-faint">
-            下载完成后会自动校验 SHA-256，随后{isInstaller ? "启动安装向导" : "替换程序并重启"}
+            下载完成后会自动校验 SHA-256，随后
+            {isInstalled
+              ? "将静默升级并重启（保留文件关联）"
+              : isLegacyInstaller
+                ? "启动安装向导"
+                : "替换程序并重启"}
           </div>
         </div>
       ) : restarting ? (
         <div className="space-y-3">
           <div className="flex items-center gap-2">
             <Icon name="check" size={18} className="text-success" />
-            <div>新版本已就位，正在自动重启…</div>
+            <div>
+              {isInstalled
+                ? "新版本正在后台静默升级，稍后将自动启动…"
+                : "新版本已就位，正在自动重启…"}
+            </div>
           </div>
           <div className="text-[12px] text-muted">
-            程序将自动关闭并启动新版本；未保存内容会在重启后恢复。
+            {isInstalled
+              ? "升级过程中将完整保留系统文件关联与快捷方式；未保存内容会在重启后恢复。"
+              : "程序将自动关闭并启动新版本；未保存内容会在重启后恢复。"}
           </div>
         </div>
       ) : downloadedPath ? (
@@ -163,9 +184,11 @@ export function UpdateDialog() {
             {downloadedPath}
           </div>
           <div className="text-[12px] text-muted">
-            {isInstaller
-              ? "请在弹出的安装向导中完成安装；安装程序会自动关闭 MasterMD，完成后可重新打开。"
-              : "点击「重启完成更新」会用新版本替换当前程序并自动重启，未保存内容可在重启后从会话恢复。"}
+            {isInstalled
+              ? "点击「静默升级并重启」将启动升级脚本并关闭当前程序，升级完成后自动启动新版本。"
+              : isLegacyInstaller
+                ? "请在弹出的安装向导中完成安装；安装程序会自动关闭 MasterMD，完成后可重新打开。"
+                : "点击「重启完成更新」会用新版本替换当前程序并自动重启，未保存内容可在重启后从会话恢复。"}
           </div>
         </div>
       ) : !info ? (
@@ -189,6 +212,7 @@ export function UpdateDialog() {
               </span>
             ) : null}
             <span>来源：{info.source === "portal" ? "软件中心" : "GitHub"}</span>
+            <span>通道：{isInstalled ? "安装版（保留文件关联）" : "绿色版（便携）"}</span>
           </div>
           {info.notes ? (
             <div>

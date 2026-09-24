@@ -130,16 +130,22 @@ pub async fn write_markdown_file(
 pub async fn save_file_dialog(
     app: tauri::AppHandle,
     default_path: Option<String>,
+    filter_all: Option<bool>,
 ) -> Result<Option<String>, String> {
     use tauri_plugin_dialog::DialogExt;
 
-    let mut builder = app
-        .dialog()
-        .file()
-        .set_title("另存为")
-        .add_filter("Markdown 文件", &["md", "markdown", "mdown"])
-        .add_filter("文本文件", &["txt"])
-        .add_filter("所有文件", &["*"]);
+    let mut builder = app.dialog().file().set_title("另存为");
+    if filter_all.unwrap_or(false) {
+        builder = builder
+            .add_filter("所有文件", &["*"])
+            .add_filter("Markdown 文件", &["md", "markdown", "mdown"])
+            .add_filter("文本文件", &["txt"]);
+    } else {
+        builder = builder
+            .add_filter("Markdown 文件", &["md", "markdown", "mdown"])
+            .add_filter("文本文件", &["txt"])
+            .add_filter("所有文件", &["*"]);
+    }
 
     if let Some(dp) = default_path.filter(|s| !s.is_empty()) {
         let path = PathBuf::from(&dp);

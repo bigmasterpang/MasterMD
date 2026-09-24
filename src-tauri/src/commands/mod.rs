@@ -8,3 +8,4 @@ pub mod recent;
 #[cfg(windows)]
 pub mod update;
 pub mod watch;
+pub mod fs;

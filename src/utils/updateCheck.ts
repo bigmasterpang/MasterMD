@@ -19,6 +19,7 @@ export interface PortalRelease {
   downloadUrl: string;
   hasUpdate: boolean;
   currentVersion: string;
+  installKind: "portable" | "installed";
 }
 
 export interface UpdateInfo {
@@ -38,6 +39,8 @@ export interface UpdateInfo {
   sha256?: string;
   downloadUrl?: string;
   filename?: string;
+  /** 安装类型：绿色便携版 / NSIS 安装版 */
+  installKind?: "portable" | "installed";
 }
 
 interface GithubRelease {
@@ -150,13 +153,14 @@ export async function checkForUpdate(): Promise<UpdateInfo> {
       sha256: release.sha256,
       downloadUrl: release.downloadUrl,
       filename: release.filename,
+      installKind: release.installKind ?? "portable",
     };
   } catch (error) {
     portalError = String(error);
   }
 
   const github = await checkGithub(current);
-  if (github) return github;
+  if (github) return { ...github, installKind: "portable" };
 
   const offline: UpdateInfo = {
     current,
@@ -168,6 +172,7 @@ export async function checkForUpdate(): Promise<UpdateInfo> {
     noRelease: true,
     checkedAt: Date.now(),
     source: "portal",
+    installKind: "portable",
   };
   if (portalError.includes("暂无")) return offline;
   throw new Error(portalError || "无法连接更新服务器");

@@ -188,6 +188,31 @@ export function useKeyboardShortcuts(): void {
         return;
       }
 
+      // ---------------- 分栏与窗口快捷键 ----------------
+      // 切换双栏：Ctrl+\
+      if (event.ctrlKey && !event.shiftKey && !event.altKey && (event.key === "\\" || code === "Backslash")) {
+        event.preventDefault();
+        useAppStore.getState().toggleSplit();
+        return;
+      }
+
+      // 聚焦左右栏：Alt+1 / Alt+2
+      if (event.altKey && !event.ctrlKey && !event.shiftKey && (key === "1" || key === "2")) {
+        event.preventDefault();
+        useAppStore.getState().setActivePane(key === "1" ? 0 : 1);
+        return;
+      }
+
+      // 标签移到另一栏：Ctrl+Alt+← / →
+      if (event.ctrlKey && event.altKey && !event.shiftKey && (event.key === "ArrowLeft" || event.key === "ArrowRight")) {
+        event.preventDefault();
+        const currentActiveId = useAppStore.getState().activeId;
+        if (currentActiveId) {
+          useAppStore.getState().moveDocToPane(currentActiveId, event.key === "ArrowLeft" ? 0 : 1);
+        }
+        return;
+      }
+
       // ---------------- 编辑类快捷键 ----------------
       const editable = editorReady();
 

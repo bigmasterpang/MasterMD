@@ -39,6 +39,8 @@ interface UpdateState {
   downloadAndInstall: () => Promise<void>;
   /** 便携版：替换并重启 */
   applyPortableUpdate: () => Promise<void>;
+  /** 安装版：静默升级并重启 */
+  applyInstallerUpdate: () => Promise<void>;
   runInstaller: () => Promise<void>;
   resetDownload: () => void;
 }
@@ -123,9 +125,10 @@ export const useUpdateStore = create<UpdateState>((set, get) => ({
         downloadedPath: result.path,
       });
 
-      // 便携版：直接替换当前程序并重启；安装包：拉起安装向导
-      const isInstaller = /setup\.exe$/i.test(info.filename ?? "");
-      if (isInstaller) {
+      // 根据安装类型分流：安装版走静默安装脚本；若无标记但文件名匹配 setup.exe 兼容走向导；绿色版走自替换
+      if (info.installKind === "installed") {
+        await get().applyInstallerUpdate();
+      } else if (/setup\.exe$/i.test(info.filename ?? "")) {
         await get().runInstaller();
       } else {
         await get().applyPortableUpdate();
@@ -146,6 +149,25 @@ export const useUpdateStore = create<UpdateState>((set, get) => ({
       await invoke("apply_update", { path });
       set({ installed: true });
       // 给界面一点时间显示"正在重启"，随后强制退出旧进程
+      await new Promise((resolve) => setTimeout(resolve, 700));
+      try {
+        await invoke("quit_app");
+      } catch {
+        await invoke("confirm_close");
+      }
+    } catch (error) {
+      set({ restarting: false, error: String(error) });
+    }
+  },
+
+  /** 安装版静默升级：调用临时 PowerShell 脚本在当前进程退出后静默运行 setup.exe /S 并重启 */
+  applyInstallerUpdate: async () => {
+    const path = get().downloadedPath;
+    if (!path) return;
+    try {
+      set({ restarting: true });
+      await invoke("apply_installer_update", { path });
+      set({ installed: true });
       await new Promise((resolve) => setTimeout(resolve, 700));
       try {
         await invoke("quit_app");

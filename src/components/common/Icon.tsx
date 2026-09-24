@@ -49,7 +49,13 @@ export type IconName =
   | "replace"
   | "arrow-up-down"
   | "info"
-  | "loader";
+  | "loader"
+  | "folder"
+  | "hash"
+  | "box"
+  | "sidebar"
+  | "folder-symlink"
+  | "filter";
 
 const PATHS: Record<IconName, string[]> = {
   "folder-open": [
@@ -211,6 +217,32 @@ const PATHS: Record<IconName, string[]> = {
     "M15.5 8.5 19 5",
     "M11.39 11.61a5.5 5.5 0 1 1-7.78 7.78 5.5 5.5 0 0 1 7.78-7.78z",
     "M11.39 11.61 15.5 8.5",
+  ],
+  folder: [
+    "M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z",
+  ],
+  hash: [
+    "M4 9h16",
+    "M4 15h16",
+    "M10 3L8 21",
+    "M16 3l-2 18",
+  ],
+  box: [
+    "M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z",
+    "M3.27 6.96L12 12.01l8.73-5.05",
+    "M12 22.08V12",
+  ],
+  sidebar: [
+    "M3 3h18v18H3z",
+    "M9 3v18",
+  ],
+  "folder-symlink": [
+    "M2 13a2 2 0 0 0 2-2V7a2 2 0 0 1 2-2h3.93a2 2 0 0 1 1.66.9l.82 1.2a2 2 0 0 0 1.66.9H20a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2Z",
+    "M10 13l-4 4 4 4",
+    "M6 17h6a4 4 0 0 0 4-4v-1",
+  ],
+  filter: [
+    "M22 3H2l8 9.46V19l4 2v-8.54L22 3z",
   ],
 };
 

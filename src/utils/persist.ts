@@ -15,6 +15,9 @@ interface UiState {
   outlineVisible: boolean;
   windowWidth: number;
   windowHeight: number;
+  split?: boolean;
+  splitRatio?: number;
+  activePane?: 0 | 1;
 }
 
 const STORE_FILE = "mastermd-store.json";
@@ -53,6 +56,9 @@ async function captureUi(): Promise<void> {
     outlineVisible: app.outlineVisible,
     windowWidth: size.width || uiCache.windowWidth,
     windowHeight: size.height || uiCache.windowHeight,
+    split: app.layout.split,
+    splitRatio: app.layout.ratio,
+    activePane: app.layout.activePane,
   };
   persistUi();
 }
@@ -81,6 +87,11 @@ export async function initPersistence(): Promise<void> {
       useAppStore.setState({
         viewMode: ui.viewMode ?? "split",
         outlineVisible: ui.outlineVisible ?? true,
+        layout: {
+          split: ui.split ?? false,
+          activePane: ui.activePane ?? 0,
+          ratio: typeof ui.splitRatio === "number" ? ui.splitRatio : 0.5,
+        },
       });
       if (ui.windowWidth && ui.windowHeight) {
         try {
@@ -101,7 +112,10 @@ export async function initPersistence(): Promise<void> {
   useAppStore.subscribe((state, prev) => {
     if (
       state.viewMode !== prev.viewMode ||
-      state.outlineVisible !== prev.outlineVisible
+      state.outlineVisible !== prev.outlineVisible ||
+      state.layout.split !== prev.layout.split ||
+      state.layout.ratio !== prev.layout.ratio ||
+      state.layout.activePane !== prev.layout.activePane
     ) {
       void captureUi();
     }
@@ -125,10 +139,10 @@ export async function flushUiState(): Promise<void> {
 /* ------------------------------------------------------------------ */
 
 interface SessionPayload {
-  /** 已保存文档的路径（用于恢复标签页） */
-  paths: string[];
-  /** 未保存 / 未命名文档的内容 */
-  unsaved: Array<{ path: string | null; content: string }>;
+  /** 已保存文档的路径及窗格（用于恢复标签页，兼容旧版 string 数组） */
+  paths: Array<string | { path: string; pane?: 0 | 1 }>;
+  /** 未保存 / 未命名文档的内容及窗格 */
+  unsaved: Array<{ path: string | null; content: string; pane?: 0 | 1 }>;
 }
 
 const SESSION_TAB_LIMIT = 8;
@@ -145,13 +159,17 @@ async function writeSession(): Promise<void> {
     const payload: SessionPayload = {
       paths: docs
         .filter((doc) => doc.filePath)
-        .map((doc) => doc.filePath as string)
+        .map((doc) => ({ path: doc.filePath as string, pane: doc.pane ?? 0 }))
         .slice(0, SESSION_TAB_LIMIT),
       unsaved: docs
         .filter((doc) => doc.isDirty || !doc.filePath)
         .filter((doc) => doc.content.length <= SESSION_CONTENT_LIMIT)
         .slice(0, SESSION_TAB_LIMIT)
-        .map((doc) => ({ path: doc.filePath, content: doc.content })),
+        .map((doc) => ({
+          path: doc.filePath,
+          content: doc.content,
+          pane: doc.pane ?? 0,
+        })),
     };
     await file.set("session", payload);
   } catch (error) {
@@ -180,6 +198,7 @@ export async function restoreSession(): Promise<void> {
         content: entry.content,
         savedContent: entry.path ? "" : entry.content,
         isDirty: Boolean(entry.path),
+        pane: entry.pane ?? 0,
       });
       if (entry.path) {
         try {
@@ -198,12 +217,16 @@ export async function restoreSession(): Promise<void> {
     }
 
     // 2. 其余已保存标签页
-    for (const path of payload.paths ?? []) {
+    for (const item of payload.paths ?? []) {
+      const path = typeof item === "string" ? item : item.path;
+      const pane = typeof item === "string" ? 0 : item.pane ?? 0;
       if (opened.has(path.toLowerCase())) continue;
       try {
         const payloadData = await invoke<FilePayload>("read_markdown_file", { path });
         if (payloadData.size > SESSION_CONTENT_LIMIT * 4) continue;
-        state.addDoc(docFromPayload(payloadData));
+        const restoredDoc = docFromPayload(payloadData);
+        restoredDoc.pane = pane;
+        state.addDoc(restoredDoc);
         opened.add(path.toLowerCase());
       } catch {
         /* 打不开的文件跳过 */

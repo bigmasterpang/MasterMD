@@ -271,8 +271,11 @@ export async function saveDocAs(id: string): Promise<boolean> {
   const doc = getDocById(id);
   if (!doc) return false;
   try {
+    const isBlank = doc.docType === "blank" && !doc.filePath;
+    const defaultPath = doc.filePath ?? (isBlank ? "未命名" : "未命名.md");
     const target = await invoke<string | null>("save_file_dialog", {
-      defaultPath: doc.filePath,
+      defaultPath,
+      filterAll: isBlank,
     });
     if (!target) return false;
     markSelfWrite();
@@ -335,11 +338,13 @@ export async function closeAllDocsWithConfirm(): Promise<boolean> {
   return true;
 }
 
-export async function newDocument(): Promise<void> {
+export async function newDocument(type: "markdown" | "blank" = "markdown"): Promise<void> {
   if (!(await ensureNoDirty(getActiveDoc()))) return;
+  const isMd = type === "markdown";
   const doc = createDoc({
-    content: EMPTY_DOC_PLACEHOLDER,
-    savedContent: EMPTY_DOC_PLACEHOLDER,
+    content: isMd ? EMPTY_DOC_PLACEHOLDER : "",
+    savedContent: isMd ? EMPTY_DOC_PLACEHOLDER : "",
+    docType: type,
   });
   useAppStore.getState().addDoc(doc);
   useAppStore.getState().setViewMode("source");

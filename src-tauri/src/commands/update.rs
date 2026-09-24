@@ -356,6 +356,32 @@ pub struct PortalRelease {
     pub download_url: String,
     pub has_update: bool,
     pub current_version: String,
+    /// 当前程序类型：portable（绿色版）/ installed（安装版）
+    pub install_kind: String,
+}
+
+/// 判断当前是否为「安装版」：
+/// 1. 安装目录存在安装标记文件（由 NSIS 安装钩子写入）；
+/// 2. 或同目录存在 uninstall.exe（NSIS 卸载程序）。
+/// 绿色版（便携版）没有这些文件，因此走自替换升级。
+#[cfg(windows)]
+pub fn is_installed_build() -> bool {
+    let Ok(current) = std::env::current_exe() else {
+        return false;
+    };
+    let Some(dir) = current.parent() else {
+        return false;
+    };
+    dir.join("installed.marker").exists() || dir.join("uninstall.exe").exists()
+}
+
+#[cfg(windows)]
+fn install_kind() -> &'static str {
+    if is_installed_build() {
+        "installed"
+    } else {
+        "portable"
+    }
 }
 
 fn version_parts(value: &str) -> Vec<u64> {
@@ -386,10 +412,10 @@ pub fn is_newer(remote: &str, local: &str) -> bool {
 }
 
 /// 按节点顺序尝试请求并解析 JSON
-fn fetch_latest(current: &str) -> Result<PortalRelease, String> {
+fn fetch_latest(current: &str, variant: &str) -> Result<PortalRelease, String> {
     let mut last_error = String::from("所有更新服务器均不可用");
     for base in PORTAL_NODES {
-        let url = format!("{base}/api/apps/{APP_ID}/{PLATFORM}/latest");
+        let url = format!("{base}/api/apps/{APP_ID}/{PLATFORM}/latest?variant={variant}");
         for proxy in [ProxyMode::System, ProxyMode::Direct] {
             match http_get(&url, 4000, proxy, true, |_| true) {
                 Ok(response) if response.status == 200 => {
@@ -442,6 +468,7 @@ fn fetch_latest(current: &str) -> Result<PortalRelease, String> {
                             .to_string(),
                         download_url: format!("{base}{download_path}"),
                         current_version: current.to_string(),
+                        install_kind: install_kind().to_string(),
                     });
                 }
                 Ok(response) if response.status == 404 => {
@@ -468,9 +495,10 @@ fn fetch_latest(current: &str) -> Result<PortalRelease, String> {
 #[tauri::command]
 pub async fn check_update(app: AppHandle) -> Result<PortalRelease, String> {
     let current = app.package_info().version.to_string();
-    tauri::async_runtime::spawn_blocking(move || fetch_latest(&current))
+    let variant = install_kind().to_string();
+    tauri::async_runtime::spawn_blocking(move || fetch_latest(&current, &variant))
         .await
-        .map_err(|e| format!("检查更新任务失败: {e}"))?
+        .map_err(|e| format!("检查更新失败: {e}"))?
 }
 
 #[cfg(windows)]
@@ -640,6 +668,51 @@ pub fn cleanup_old_binary() {
 }
 
 /// 退出应用（自更新替换完成后调用，确保旧进程立即结束）
+/// 安装版静默升级：
+/// 生成一个临时脚本，等待当前进程退出 → 静默运行安装包（/S）→ 启动新版 → 自删。
+/// 由前端在下载完成后调用，随后立即退出应用。
+#[cfg(windows)]
+#[tauri::command]
+pub async fn apply_installer_update(path: String) -> Result<(), String> {
+    let setup = std::path::PathBuf::from(&path);
+    if !setup.exists() {
+        return Err("安装包不存在，请重新下载".to_string());
+    }
+    let current = std::env::current_exe().map_err(|e| format!("无法定位当前程序: {e}"))?;
+    let pid = std::process::id();
+    let script = std::env::temp_dir().join(format!("mastermd-update-{pid}.ps1"));
+    let body = format!(
+        "$ErrorActionPreference = 'SilentlyContinue'\r\n\
+         while (Get-Process -Id {pid} -ErrorAction SilentlyContinue) {{ Start-Sleep -Milliseconds 700 }}\r\n\
+         Start-Sleep -Milliseconds 400\r\n\
+         Start-Process -FilePath '{setup}' -ArgumentList '/S' -Wait\r\n\
+         Start-Sleep -Milliseconds 600\r\n\
+         Start-Process -FilePath '{exe}'\r\n\
+         Remove-Item -LiteralPath $MyInvocation.MyCommand.Path -Force\r\n",
+        pid = pid,
+        setup = setup.display(),
+        exe = current.display()
+    );
+    std::fs::write(&script, body).map_err(|e| format!("无法写入升级脚本: {e}"))?;
+
+    use std::os::windows::process::CommandExt;
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+    std::process::Command::new("powershell")
+        .args([
+            "-NoProfile",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-WindowStyle",
+            "Hidden",
+            "-File",
+        ])
+        .arg(&script)
+        .creation_flags(CREATE_NO_WINDOW)
+        .spawn()
+        .map_err(|e| format!("启动升级脚本失败: {e}"))?;
+    Ok(())
+}
+
 #[cfg(windows)]
 #[tauri::command]
 pub fn quit_app(app: tauri::AppHandle) {

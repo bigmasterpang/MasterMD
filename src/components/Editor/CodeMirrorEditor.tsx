@@ -26,7 +26,7 @@ import {
   completionKeymap,
 } from "@codemirror/autocomplete";
 import { search } from "@codemirror/search";
-import { useAppStore, getDocById, getActiveDoc } from "../../stores/appStore";
+import { useAppStore, getDocById } from "../../stores/appStore";
 import { isMarkdownPath } from "../../utils/filePath";
 import { useSearchStore } from "../../stores/searchStore";
 import { useSettingsStore } from "../../stores/settingsStore";
@@ -55,9 +55,8 @@ function markdownSupport(): Extension {
   return markdown({ base: markdownLanguage, codeLanguages: languages });
 }
 
-function buildExtensions(isDark: boolean): Extension[] {
+function buildExtensions(isDark: boolean, doc: ReturnType<typeof getDocById>): Extension[] {
   const settings = useSettingsStore.getState();
-  const doc = getActiveDoc();
   const isMd = !doc?.filePath || isMarkdownPath(doc.filePath);
   return [
     lineNumberCompartment.of(settings.showLineNumbers ? lineNumbers() : []),
@@ -103,7 +102,8 @@ export function CodeMirrorEditor({ docId, isDark }: Props) {
   const [menu, setMenu] = useState<{ x: number; y: number; hasSelection: boolean } | null>(
     null,
   );
-  const content = useAppStore((s) => s.docs.find((d) => d.id === s.activeId)?.content ?? "");
+  const doc = useAppStore((s) => s.docs.find((d) => d.id === docId) ?? null);
+  const content = doc?.content ?? "";
   const showLineNumbers = useSettingsStore((s) => s.showLineNumbers);
   const wordWrap = useSettingsStore((s) => s.wordWrap);
   const tabSize = useSettingsStore((s) => s.tabSize);
@@ -113,19 +113,21 @@ export function CodeMirrorEditor({ docId, isDark }: Props) {
     const host = hostRef.current;
     if (!host) return;
 
+    const initialDoc = getDocById(docId);
     const state = EditorState.create({
-      doc: content,
+      doc: initialDoc?.content ?? "",
       extensions: [
-        ...buildExtensions(isDark),
+        ...buildExtensions(isDark, initialDoc),
         EditorView.updateListener.of((update) => {
           if (update.docChanged && !syncingRef.current) {
-            useAppStore.getState().setContent(update.state.doc.toString());
+            useAppStore.getState().setDocContent(docId, update.state.doc.toString());
           }
           if (update.selectionSet || update.docChanged) {
             const pos = update.state.selection.main.head;
             const line = update.state.doc.lineAt(pos);
-            useAppStore.getState().setCursor(line.number, pos - line.from + 1);
-            useAppStore.getState().setSelectionLength(
+            useAppStore.getState().setDocCursor(docId, line.number, pos - line.from + 1);
+            useAppStore.getState().setDocSelectionLength(
+              docId,
               update.state.selection.ranges.reduce(
                 (sum, range) => sum + (range.to - range.from),
                 0,
@@ -134,6 +136,51 @@ export function CodeMirrorEditor({ docId, isDark }: Props) {
           }
         }),
         EditorView.domEventHandlers({
+          focus: () => {
+            const s = useAppStore.getState();
+            if (s.activeId !== docId) {
+              s.activateDoc(docId);
+            }
+            if (viewRef.current) {
+              registerEditor(viewRef.current);
+            }
+            return false;
+          },
+          mousedown: () => {
+            const s = useAppStore.getState();
+            if (s.activeId !== docId) {
+              s.activateDoc(docId);
+            }
+            if (viewRef.current) {
+              registerEditor(viewRef.current);
+            }
+            return false;
+          },
+          dragover: (event) => {
+            if (event.dataTransfer?.types.includes("application/mastermd-tab")) {
+              event.preventDefault();
+              return false;
+            }
+            return false;
+          },
+          drop: (event) => {
+            if (event.dataTransfer?.types.includes("application/mastermd-tab")) {
+              const raw = event.dataTransfer.getData("application/mastermd-tab");
+              if (raw) {
+                try {
+                  const data = JSON.parse(raw) as { docId: string; fromPane: 0 | 1 };
+                  const currentDoc = getDocById(docId);
+                  const targetPane = currentDoc?.pane ?? 0;
+                  useAppStore.getState().moveDocToPane(data.docId, targetPane);
+                  event.preventDefault();
+                  return true;
+                } catch {
+                  /* ignore */
+                }
+              }
+            }
+            return false;
+          },
           paste: (event) => {
             // 图片粘贴仅用于 Markdown 文档
             const path = getDocById(docId)?.filePath ?? "";
@@ -142,7 +189,7 @@ export function CodeMirrorEditor({ docId, isDark }: Props) {
               (item) => item.type.startsWith("image/"),
             );
             if (!hasImage) return false; // 普通文本粘贴交给 CodeMirror 处理
-            void handleImagePaste(event, viewRef.current);
+            void handleImagePaste(event, viewRef.current, docId);
             return true;
           },
         }),
@@ -176,10 +223,11 @@ export function CodeMirrorEditor({ docId, isDark }: Props) {
         scroller.scrollTop = saved;
       });
     }
-    view.focus();
 
-    // 向全局暴露编辑器实例（编辑器命令 / 搜索 / 大纲共用）
-    registerEditor(view);
+    if (useAppStore.getState().activeId === docId) {
+      view.focus();
+      registerEditor(view);
+    }
 
     // 记录滚动位置（节流）
     let scrollTimer: number | null = null;
@@ -195,13 +243,23 @@ export function CodeMirrorEditor({ docId, isDark }: Props) {
     return () => {
       view.scrollDOM.removeEventListener("scroll", onScroll);
       if (scrollTimer !== null) window.clearTimeout(scrollTimer);
-      registerEditor(null);
+      if (useAppStore.getState().activeId === docId) {
+        registerEditor(null);
+      }
       view.destroy();
       viewRef.current = null;
     };
     // 仅在文档切换时重建
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [docId]);
+
+  /* ------------------ 当前活动文档变更时同步注册编辑器 ------------------ */
+  const isActive = useAppStore((s) => s.activeId === docId);
+  useEffect(() => {
+    if (isActive && viewRef.current) {
+      registerEditor(viewRef.current);
+    }
+  }, [isActive]);
 
   /* ------------------------ 外部内容变化同步 ------------------------ */
   useEffect(() => {
@@ -269,7 +327,7 @@ export function CodeMirrorEditor({ docId, isDark }: Props) {
 
   // 只读状态变化（例如文件重新加载后判定为大文件）
   const readOnly = useAppStore(
-    (s) => s.docs.find((d) => d.id === s.activeId)?.readOnly ?? false,
+    (s) => s.docs.find((d) => d.id === docId)?.readOnly ?? false,
   );
   useEffect(() => {
     const view = viewRef.current;
@@ -328,6 +386,7 @@ export function CodeMirrorEditor({ docId, isDark }: Props) {
 async function handleImagePaste(
   event: ClipboardEvent,
   view: EditorView | null,
+  docId: string,
 ): Promise<void> {
   if (!view) return;
   event.preventDefault();
@@ -335,7 +394,7 @@ async function handleImagePaste(
   const imageItem = items.find((item) => item.type.startsWith("image/"));
   if (!imageItem) return;
 
-  const doc = getActiveDoc();
+  const doc = getDocById(docId);
   if (!doc?.filePath) {
     await showMessage(
       "请先保存文档",

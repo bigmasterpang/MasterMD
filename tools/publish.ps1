@@ -40,6 +40,9 @@ if (-not $FilePath) {
         # Portable single-file build: app frontend is embedded in the exe
         $built = Join-Path $releaseDir "MasterMD.exe"
         if (-not (Test-Path -LiteralPath $built)) {
+            $built = Join-Path $releaseDir "mastermd.exe"
+        }
+        if (-not (Test-Path -LiteralPath $built)) {
             throw "Portable binary not found: $built (run with -Build first)"
         }
         $target = Join-Path $releaseDir "MasterMD_${Version}_x64.exe"
@@ -72,4 +75,5 @@ if (-not $ReleaseNotes) {
     -Platform "windows" `
     -FilePath $FilePath `
     -Version $Version `
-    -ReleaseNotes $ReleaseNotes
+    -ReleaseNotes $ReleaseNotes `
+    -Variant $Mode

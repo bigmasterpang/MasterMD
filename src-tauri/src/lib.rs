@@ -28,6 +28,51 @@ fn confirm_close(window: tauri::Window) -> Result<(), String> {
     window.destroy().map_err(|e| e.to_string())
 }
 
+fn percent_encode(s: &str) -> String {
+    let mut out = String::new();
+    for b in s.as_bytes() {
+        match *b {
+            b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                out.push(*b as char);
+            }
+            _ => {
+                use std::fmt::Write;
+                let _ = write!(out, "%{:02X}", b);
+            }
+        }
+    }
+    out
+}
+
+/// 在独立的新窗口中打开文档
+#[tauri::command]
+async fn open_in_new_window(app: tauri::AppHandle, path: String) -> Result<(), String> {
+    let title = std::path::Path::new(&path)
+        .file_name()
+        .map(|s| s.to_string_lossy().to_string())
+        .unwrap_or_else(|| "MasterMD".to_string());
+    let encoded = percent_encode(&path);
+    let label = format!(
+        "win-{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis()
+    );
+    let url_str = format!("index.html?open={}", encoded);
+    let _window = tauri::WebviewWindowBuilder::new(
+        &app,
+        label,
+        tauri::WebviewUrl::App(url_str.into()),
+    )
+    .title(title)
+    .inner_size(1000.0, 760.0)
+    .build()
+    .map_err(|e| format!("打开新窗口失败: {e}"))?;
+
+    Ok(())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -69,12 +114,15 @@ pub fn run() {
             set_dirty,
             get_startup_file,
             confirm_close,
+            open_in_new_window,
             file::read_markdown_file,
             file::write_markdown_file,
             file::write_binary_file,
             file::save_file_dialog,
             file::path_exists,
             file::read_file_as_base64,
+            commands::fs::list_directory,
+            commands::fs::parent_dir_of,
             recent::get_recent_files,
             recent::add_recent_file,
             recent::remove_recent_file,
@@ -90,6 +138,8 @@ pub fn run() {
             commands::update::download_update,
             #[cfg(windows)]
             commands::update::run_installer,
+            #[cfg(windows)]
+            commands::update::apply_installer_update,
             #[cfg(windows)]
             commands::update::apply_update,
             #[cfg(windows)]
