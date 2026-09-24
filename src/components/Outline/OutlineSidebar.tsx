@@ -78,7 +78,7 @@ function PdfOutlineSection({
   useEffect(() => {
     if (tab === "thumbnails" && listRef.current) {
       const el = listRef.current.querySelector<HTMLElement>(`[data-page="${currentPage}"]`);
-      el?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+      el?.scrollIntoView({ block: "nearest", behavior: "auto" });
     }
   }, [tab, currentPage]);
 

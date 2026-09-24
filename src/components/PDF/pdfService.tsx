@@ -5,7 +5,23 @@ import { useAppStore } from "../../stores/appStore";
 import { askConfirm, showMessage } from "../../stores/dialogStore";
 import { fileName } from "../../utils/filePath";
 import { invoke } from "@tauri-apps/api/core";
-import type { PdfHighlight } from "../../types";
+import type { PdfHighlight, PdfNote } from "../../types";
+
+export interface PaperTheme {
+  id: string;
+  name: string;
+  color: string;
+  preview: string;
+  textColor?: string;
+}
+
+export const PDF_PAPER_THEMES: PaperTheme[] = [
+  { id: "white", name: "纯白", color: "#ffffff", preview: "#ffffff" },
+  { id: "warm", name: "暖阳", color: "#f7f1e5", preview: "#f7f1e5" },
+  { id: "green", name: "豆沙", color: "#eaf4eb", preview: "#eaf4eb" },
+  { id: "parchment", name: "羊皮", color: "#f5eedb", preview: "#f5eedb" },
+  { id: "dark", name: "夜间", color: "#18181b", preview: "#27272a" },
+];
 
 export interface OutlineItem {
   title: string;
@@ -159,6 +175,77 @@ export function clearAllHighlights(docId: string) {
   useAppStore.getState().patchDoc(docId, {
     pdfHighlights: [],
     isDirty: true,
+  });
+}
+
+/* ---------------- PDF 便签附注（图钉笔记） ---------------- */
+
+/** 添加便签附注图钉 */
+export function addPdfNote(
+  docId: string,
+  pageNum: number,
+  xPercent: number,
+  yPercent: number,
+  content = "",
+  color: "yellow" | "blue" | "green" | "purple" = "yellow",
+): PdfNote {
+  const doc = useAppStore.getState().docs.find((d) => d.id === docId);
+  const newNote: PdfNote = {
+    id: `note-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`,
+    page: pageNum,
+    xPercent: Number(xPercent.toFixed(2)),
+    yPercent: Number(yPercent.toFixed(2)),
+    content,
+    color,
+    createdAt: Date.now(),
+  };
+
+  const existing = doc?.pdfNotes ?? [];
+  useAppStore.getState().patchDoc(docId, {
+    pdfNotes: [...existing, newNote],
+    isDirty: true,
+  });
+  return newNote;
+}
+
+/** 更新便签附注内容或颜色 */
+export function updatePdfNote(docId: string, noteId: string, patch: Partial<PdfNote>) {
+  const doc = useAppStore.getState().docs.find((d) => d.id === docId);
+  if (!doc || !doc.pdfNotes) return;
+  useAppStore.getState().patchDoc(docId, {
+    pdfNotes: doc.pdfNotes.map((n) => (n.id === noteId ? { ...n, ...patch } : n)),
+    isDirty: true,
+  });
+}
+
+/** 删除便签附注 */
+export function deletePdfNote(docId: string, noteId: string) {
+  const doc = useAppStore.getState().docs.find((d) => d.id === docId);
+  if (!doc || !doc.pdfNotes) return;
+  useAppStore.getState().patchDoc(docId, {
+    pdfNotes: doc.pdfNotes.filter((n) => n.id !== noteId),
+    isDirty: true,
+  });
+}
+
+/** 复制当前页面 Canvas 为高精 PNG 图片到系统剪贴板 */
+export async function copyCanvasToClipboard(canvas: HTMLCanvasElement): Promise<boolean> {
+  return new Promise((resolve) => {
+    canvas.toBlob(async (blob) => {
+      if (!blob) {
+        resolve(false);
+        return;
+      }
+      try {
+        await navigator.clipboard.write([
+          new ClipboardItem({ "image/png": blob }),
+        ]);
+        resolve(true);
+      } catch (err) {
+        console.error("复制图片到剪贴板失败", err);
+        resolve(false);
+      }
+    }, "image/png");
   });
 }
 

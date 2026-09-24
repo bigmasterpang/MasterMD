@@ -100,6 +100,21 @@ export interface DocState {
   cleanPdfBase64?: string;
   /** PDF 动态高亮标注列表（可新增、删除、清除） */
   pdfHighlights?: PdfHighlight[];
+  /** PDF 阅读底色主题：white, warm, green, parchment, dark */
+  pdfPaperTheme?: string;
+  /** PDF 便签附注标注列表 */
+  pdfNotes?: PdfNote[];
+}
+
+/** PDF 便签附注图钉数据 */
+export interface PdfNote {
+  id: string;
+  page: number;
+  xPercent: number;
+  yPercent: number;
+  content: string;
+  color?: "yellow" | "blue" | "green" | "purple";
+  createdAt: number;
 }
 
 /** PDF 动态高亮矩形标注 */

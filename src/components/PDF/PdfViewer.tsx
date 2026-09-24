@@ -5,20 +5,26 @@ import "pdfjs-dist/web/pdf_viewer.css";
 import { Icon } from "../common/Icon";
 import { ContextMenu, type ContextMenuItem } from "../common/ContextMenu";
 import { useAppStore } from "../../stores/appStore";
-import { askPdfPassword } from "../../stores/dialogStore";
+import { askPdfPassword, showMessage } from "../../stores/dialogStore";
 import { fileName } from "../../utils/filePath";
+import type { PdfNote } from "../../types";
 import {
   addPdfHighlight,
+  addPdfNote,
   base64ToBytes,
   clearAllHighlights,
   clearPageHighlights,
+  copyCanvasToClipboard,
+  deletePdfNote,
   deletePdfPage,
   extractPdfPage,
+  PDF_PAPER_THEMES,
   registerPdfDocument,
   removePdfHighlight,
   rotateAllPdfPages,
   rotatePdfPage,
   unregisterPdfDocument,
+  updatePdfNote,
   type OutlineItem,
 } from "./pdfService";
 
@@ -47,6 +53,14 @@ interface HighlightMenuState {
   pageNum: number;
 }
 
+interface PageContextMenuState {
+  x: number;
+  y: number;
+  pageNum: number;
+  xPercent: number;
+  yPercent: number;
+}
+
 export function PdfViewer({ docId, isDark }: PdfViewerProps) {
   const doc = useAppStore((s) => s.docs.find((d) => d.id === docId) ?? null);
   const outlineVisible = useAppStore((s) => s.outlineVisible);
@@ -56,25 +70,39 @@ export function PdfViewer({ docId, isDark }: PdfViewerProps) {
   const [numPages, setNumPages] = useState(0);
   const [currentPage, setCurrentPage] = useState(1);
   const [scale, setScale] = useState<number>(1.2);
-  const [debouncedScale, setDebouncedScale] = useState<number>(1.2);
   const [fitMode, setFitMode] = useState<"custom" | "width" | "page">("width");
-  const [invertColors, setInvertColors] = useState(false);
+  const [showThemeMenu, setShowThemeMenu] = useState(false);
+  const [activeNoteId, setActiveNoteId] = useState<string | null>(null);
+
+  // 右键菜单状态
   const [selectionMenu, setSelectionMenu] = useState<PdfSelectionMenuState | null>(null);
   const [highlightMenu, setHighlightMenu] = useState<HighlightMenuState | null>(null);
+  const [pageContextMenu, setPageContextMenu] = useState<PageContextMenuState | null>(null);
 
   const containerRef = useRef<HTMLDivElement>(null);
   const pageRefs = useRef<Map<number, HTMLDivElement>>(new Map());
+  const themeDropdownRef = useRef<HTMLDivElement>(null);
 
   const pdfBase64 = doc?.pdfBase64 ?? "";
   const docName = doc?.filePath ? fileName(doc.filePath) : "PDF 文档";
 
-  // 大文档缩放性能优化：对高负载重绘进行 100ms 防抖，滚动缩放时先通过 CSS 缩放，停止滚动后精细渲染
+  // 当前底色主题
+  const paperTheme = doc?.pdfPaperTheme || "white";
+  const activePaperTheme = useMemo(
+    () => PDF_PAPER_THEMES.find((t) => t.id === paperTheme) || PDF_PAPER_THEMES[0],
+    [paperTheme],
+  );
+
+  // 点击外部关闭底色下拉框
   useEffect(() => {
-    const timer = setTimeout(() => {
-      setDebouncedScale(scale);
-    }, 100);
-    return () => clearTimeout(timer);
-  }, [scale]);
+    const handleClickOutside = (e: MouseEvent) => {
+      if (themeDropdownRef.current && !themeDropdownRef.current.contains(e.target as Node)) {
+        setShowThemeMenu(false);
+      }
+    };
+    window.addEventListener("mousedown", handleClickOutside);
+    return () => window.removeEventListener("mousedown", handleClickOutside);
+  }, []);
 
   // 加载 PDF 文档
   const loadPdf = useCallback(
@@ -177,7 +205,6 @@ export function PdfViewer({ docId, isDark }: PdfViewerProps) {
       if (containerWidth > 0 && viewport.width > 0) {
         const newScale = Math.max(0.3, Math.min(3.5, containerWidth / viewport.width));
         setScale(newScale);
-        setDebouncedScale(newScale);
         setFitMode("width");
         useAppStore.getState().patchDoc(docId, { pdfScale: "width" });
       }
@@ -196,7 +223,6 @@ export function PdfViewer({ docId, isDark }: PdfViewerProps) {
       if (containerHeight > 0 && viewport.height > 0) {
         const newScale = Math.max(0.3, Math.min(3.5, containerHeight / viewport.height));
         setScale(newScale);
-        setDebouncedScale(newScale);
         setFitMode("page");
         useAppStore.getState().patchDoc(docId, { pdfScale: "page" });
       }
@@ -235,13 +261,16 @@ export function PdfViewer({ docId, isDark }: PdfViewerProps) {
     }
   };
 
-  // 跳转到指定页面
+  // 跳转到指定页面（直接、瞬时直达，避免冗长缓动翻页）
   const scrollToPage = useCallback(
     (pageNum: number) => {
       const safePage = Math.max(1, Math.min(numPages, pageNum));
       const targetEl = pageRefs.current.get(safePage);
-      if (targetEl) {
-        targetEl.scrollIntoView({ behavior: "smooth", block: "start" });
+      const container = containerRef.current;
+      if (targetEl && container) {
+        const containerRect = container.getBoundingClientRect();
+        const targetRect = targetEl.getBoundingClientRect();
+        container.scrollTop += (targetRect.top - containerRect.top - 16);
         setCurrentPage(safePage);
         useAppStore.getState().patchDoc(docId, { pdfCurrentPage: safePage });
       }
@@ -260,7 +289,7 @@ export function PdfViewer({ docId, isDark }: PdfViewerProps) {
     return () => window.removeEventListener("pdf-jump-to-page" as any, handler);
   }, [docId, scrollToPage]);
 
-  // 支持 Ctrl + 滚轮平滑缩放
+  // 支持 Ctrl + 滚轮一体化缩放
   useEffect(() => {
     const container = containerRef.current;
     if (!container) return;
@@ -280,7 +309,7 @@ export function PdfViewer({ docId, isDark }: PdfViewerProps) {
     };
   }, []);
 
-  // 右键划词选区与菜单处理
+  // 右键菜单智能分流：选中文本 vs 空白非内容区域
   const handleContextMenu = (e: React.MouseEvent) => {
     const selection = window.getSelection();
     const text = selection?.toString()?.trim() || "";
@@ -302,8 +331,10 @@ export function PdfViewer({ docId, isDark }: PdfViewerProps) {
     const clientRects = range ? Array.from(range.getClientRects()) : [];
     const pageRect = pageEl ? pageEl.getBoundingClientRect() : null;
 
-    if (text || clientRects.length > 0) {
+    if (text.length > 0 && clientRects.length > 0) {
+      // 1. 划词选区模式：弹出复制与高亮菜单
       e.preventDefault();
+      setPageContextMenu(null);
       setSelectionMenu({
         x: e.clientX,
         y: e.clientY,
@@ -311,6 +342,26 @@ export function PdfViewer({ docId, isDark }: PdfViewerProps) {
         pageNum: targetPage,
         clientRects,
         pageRect,
+      });
+    } else {
+      // 2. 空白或非文本区域：弹出页面实用功能菜单（添加附注、复制页面为图片、另存、旋转等）
+      e.preventDefault();
+      window.getSelection()?.removeAllRanges();
+      setSelectionMenu(null);
+
+      let xPercent = 50;
+      let yPercent = 50;
+      if (pageRect && pageRect.width > 0 && pageRect.height > 0) {
+        xPercent = Math.max(2, Math.min(95, ((e.clientX - pageRect.left) / pageRect.width) * 100));
+        yPercent = Math.max(2, Math.min(95, ((e.clientY - pageRect.top) / pageRect.height) * 100));
+      }
+
+      setPageContextMenu({
+        x: e.clientX,
+        y: e.clientY,
+        pageNum: targetPage,
+        xPercent,
+        yPercent,
       });
     }
   };
@@ -461,9 +512,103 @@ export function PdfViewer({ docId, isDark }: PdfViewerProps) {
     ];
   }, [highlightMenu, docId]);
 
+  // 空白处/非文本区域右键菜单（添加便签附注、复制页面为图片、另存此页等实用功能）
+  const pageContextMenuGroups = useMemo<ContextMenuItem[][]>(() => {
+    if (!pageContextMenu) return [];
+    const pNum = pageContextMenu.pageNum;
+    const xP = pageContextMenu.xPercent;
+    const yP = pageContextMenu.yPercent;
+
+    return [
+      [
+        {
+          label: "在此添加便签附注",
+          icon: "pin",
+          onClick: () => {
+            const newNote = addPdfNote(docId, pNum, xP, yP);
+            setActiveNoteId(newNote.id);
+            setPageContextMenu(null);
+          },
+        },
+      ],
+      [
+        {
+          label: "复制本页为图片 (PNG)",
+          icon: "copy",
+          onClick: async () => {
+            setPageContextMenu(null);
+            const pageEl = pageRefs.current.get(pNum);
+            const canvas = pageEl?.querySelector("canvas");
+            if (canvas) {
+              const ok = await copyCanvasToClipboard(canvas);
+              if (ok) {
+                await showMessage("复制成功", `第 ${pNum} 页已作为高清晰度 PNG 图片复制到剪贴板，可直接在微信、文档中粘贴。`);
+              } else {
+                await showMessage("复制失败", "无法将页面图像写入系统剪贴板。");
+              }
+            }
+          },
+        },
+        {
+          label: "另存此页为独立 PDF",
+          icon: "download",
+          onClick: () => {
+            setPageContextMenu(null);
+            void extractPdfPage(docId, pNum);
+          },
+        },
+      ],
+      [
+        {
+          label: "顺时针旋转此页 90°",
+          icon: "rotate-cw",
+          onClick: () => {
+            setPageContextMenu(null);
+            void rotatePdfPage(docId, pNum, true);
+          },
+        },
+        {
+          label: "删除当前页",
+          icon: "trash",
+          onClick: () => {
+            setPageContextMenu(null);
+            void deletePdfPage(docId, pNum);
+          },
+        },
+      ],
+      [
+        {
+          label: "适合页宽",
+          onClick: () => {
+            setPageContextMenu(null);
+            setFitMode("width");
+            void updateFitWidth();
+          },
+        },
+        {
+          label: "适合整页",
+          onClick: () => {
+            setPageContextMenu(null);
+            setFitMode("page");
+            void updateFitPage();
+          },
+        },
+      ],
+    ];
+  }, [pageContextMenu, docId, updateFitWidth, updateFitPage]);
+
+  // 根据当前选择的阅读底色，渲染舒适的背景色调
+  const containerBgClass = useMemo(() => {
+    if (paperTheme === "dark") return "bg-[#18181b]";
+    if (paperTheme === "warm") return "bg-[#ece5d8]";
+    if (paperTheme === "green") return "bg-[#ddeadf]";
+    if (paperTheme === "parchment") return "bg-[#ede3cb]";
+    return isDark ? "bg-[#18181b]" : "bg-neutral-100";
+  }, [paperTheme, isDark]);
+
   return (
     <div className="relative flex h-full w-full flex-col overflow-hidden bg-panel">
-      {/* PDF 顶置工具栏：防止挤压、加 shrink-0、窄屏隐藏文字只留精细图标 */}
+      {/* PDF 顶置工具栏 */}
       <div className="flex h-9 shrink-0 items-center justify-between gap-1 border-b border-line bg-panel px-2 text-[12px] text-muted overflow-x-auto overflow-y-hidden scrollbar-none">
         {/* 左侧：侧栏切换 & 页码跳转 */}
         <div className="flex shrink-0 items-center gap-1">
@@ -516,7 +661,7 @@ export function PdfViewer({ docId, isDark }: PdfViewerProps) {
           </button>
         </div>
 
-        {/* 中间：缩放控制 */}
+        {/* 中间：缩放控制 & 自定义阅读底色切换器 */}
         <div className="flex shrink-0 items-center gap-1">
           <button
             type="button"
@@ -525,7 +670,6 @@ export function PdfViewer({ docId, isDark }: PdfViewerProps) {
               setFitMode("custom");
               const next = Math.max(0.3, Number((scale - 0.15).toFixed(2)));
               setScale(next);
-              setDebouncedScale(next);
             }}
             className="flex h-7 w-7 shrink-0 items-center justify-center rounded hover:bg-hover hover:text-fg"
           >
@@ -538,7 +682,6 @@ export function PdfViewer({ docId, isDark }: PdfViewerProps) {
             onClick={() => {
               setFitMode("custom");
               setScale(1.0);
-              setDebouncedScale(1.0);
             }}
           >
             {Math.round(scale * 100)}%
@@ -551,7 +694,6 @@ export function PdfViewer({ docId, isDark }: PdfViewerProps) {
               setFitMode("custom");
               const next = Math.min(4.0, Number((scale + 0.15).toFixed(2)));
               setScale(next);
-              setDebouncedScale(next);
             }}
             className="flex h-7 w-7 shrink-0 items-center justify-center rounded hover:bg-hover hover:text-fg"
           >
@@ -587,9 +729,61 @@ export function PdfViewer({ docId, isDark }: PdfViewerProps) {
           >
             整页
           </button>
+
+          <div className="mx-1 h-4 w-px shrink-0 bg-line" />
+
+          {/* 自定义阅读底色切换器（置于中间，提供多个颜色选项，防止蓝块填满） */}
+          <div className="relative" ref={themeDropdownRef}>
+            <button
+              type="button"
+              title="切换阅读底色（护眼舒适）"
+              onClick={() => setShowThemeMenu((prev) => !prev)}
+              className={`flex h-7 shrink-0 items-center gap-1.5 rounded px-2 text-[11.5px] transition-colors ${
+                showThemeMenu ? "bg-hover text-fg" : "hover:bg-hover hover:text-fg"
+              }`}
+            >
+              <span
+                className="h-3.5 w-3.5 rounded-full border border-line shadow-2xs shrink-0"
+                style={{ backgroundColor: activePaperTheme.preview }}
+              />
+              <span className="whitespace-nowrap text-fg/90">{activePaperTheme.name}</span>
+              <Icon name="chevron-down" size={11} className="opacity-60 shrink-0" />
+            </button>
+
+            {showThemeMenu && (
+              <div className="absolute left-0 top-full z-50 mt-1 min-w-[145px] rounded-lg border border-line bg-elevated p-1 shadow-lg backdrop-blur-md">
+                <div className="px-2 py-1 text-[10.5px] font-medium text-faint">选择阅读底色</div>
+                {PDF_PAPER_THEMES.map((theme) => {
+                  const isSel = theme.id === activePaperTheme.id;
+                  return (
+                    <button
+                      key={theme.id}
+                      type="button"
+                      onClick={() => {
+                        useAppStore.getState().patchDoc(docId, { pdfPaperTheme: theme.id });
+                        setShowThemeMenu(false);
+                      }}
+                      className={`flex w-full items-center justify-between gap-2 rounded px-2 py-1.5 text-left text-[11.5px] transition-colors ${
+                        isSel ? "bg-accent/15 font-medium text-accent" : "hover:bg-hover hover:text-fg"
+                      }`}
+                    >
+                      <div className="flex items-center gap-2">
+                        <span
+                          className="h-3.5 w-3.5 rounded-full border border-line shrink-0"
+                          style={{ backgroundColor: theme.preview }}
+                        />
+                        <span>{theme.name}</span>
+                      </div>
+                      {isSel && <Icon name="check" size={12} className="text-accent" />}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+          </div>
         </div>
 
-        {/* 右侧：编辑与夜间模式 */}
+        {/* 右侧：编辑与页面操作 */}
         <div className="flex shrink-0 items-center gap-0.5 sm:gap-1">
           <button
             type="button"
@@ -630,20 +824,6 @@ export function PdfViewer({ docId, isDark }: PdfViewerProps) {
             <Icon name="download" size={13} className="shrink-0" />
             <span className="hidden 2xl:inline whitespace-nowrap">另存此页</span>
           </button>
-
-          <div className="mx-1 h-4 w-px shrink-0 bg-line" />
-
-          {/* 夜间反色阅读模式 */}
-          <button
-            type="button"
-            title={invertColors ? "关闭深色阅读模式" : "开启深色阅读滤镜（夜间舒适护眼）"}
-            onClick={() => setInvertColors(!invertColors)}
-            className={`flex h-7 w-7 shrink-0 items-center justify-center rounded transition-colors ${
-              invertColors ? "bg-accent text-accent-contrast" : "hover:bg-hover hover:text-fg"
-            }`}
-          >
-            <Icon name={invertColors ? "sun" : "moon"} size={14} className="shrink-0" />
-          </button>
         </div>
       </div>
 
@@ -652,9 +832,7 @@ export function PdfViewer({ docId, isDark }: PdfViewerProps) {
         ref={containerRef}
         onScroll={handleScroll}
         onContextMenu={handleContextMenu}
-        className={`flex flex-1 flex-col items-center overflow-y-auto overflow-x-auto p-6 scrollbar-thin ${
-          isDark ? "bg-[#18181b]" : "bg-neutral-100"
-        }`}
+        className={`flex flex-1 flex-col items-center overflow-y-auto overflow-x-auto p-6 scrollbar-thin transition-colors duration-200 ${containerBgClass}`}
       >
         {loading ? (
           <div className="flex h-full flex-col items-center justify-center gap-3 text-muted">
@@ -676,7 +854,7 @@ export function PdfViewer({ docId, isDark }: PdfViewerProps) {
         ) : (
           <div
             className={`flex flex-col items-center gap-6 transition-all ${
-              invertColors ? "invert contrast-[0.9] hue-rotate-180" : ""
+              paperTheme === "dark" ? "invert contrast-[0.9] hue-rotate-180" : ""
             }`}
           >
             {Array.from({ length: numPages }, (_, i) => i + 1).map((pNum) => (
@@ -693,9 +871,12 @@ export function PdfViewer({ docId, isDark }: PdfViewerProps) {
                   pdfProxy={pdfProxy}
                   pageNum={pNum}
                   scale={scale}
-                  renderScale={debouncedScale}
                   docId={docId}
+                  paperTheme={paperTheme}
                   highlights={(doc?.pdfHighlights ?? []).filter((h) => h.page === pNum)}
+                  notes={(doc?.pdfNotes ?? []).filter((n) => n.page === pNum)}
+                  activeNoteId={activeNoteId}
+                  setActiveNoteId={setActiveNoteId}
                   onHighlightContextMenu={(x, y, hlId, p) =>
                     setHighlightMenu({ x, y, highlightId: hlId, pageNum: p })
                   }
@@ -725,47 +906,67 @@ export function PdfViewer({ docId, isDark }: PdfViewerProps) {
           onClose={() => setHighlightMenu(null)}
         />
       ) : null}
+
+      {/* 空白处/非文本区域右键菜单（添加便签附注、另存本页、旋转等） */}
+      {pageContextMenu ? (
+        <ContextMenu
+          x={pageContextMenu.x}
+          y={pageContextMenu.y}
+          groups={pageContextMenuGroups}
+          onClose={() => setPageContextMenu(null)}
+        />
+      ) : null}
     </div>
   );
 }
 
-/** 单页 Canvas + TextLayer 渲染组件（带视口虚拟化渲染与白色背景防黑底机制） */
+/** 单页 Canvas + TextLayer 渲染组件（带视口虚拟化渲染、一体化缩放与护眼底色） */
 function PdfPage({
   pdfProxy,
   pageNum,
   scale,
-  renderScale,
   docId,
+  paperTheme,
   highlights,
+  notes,
+  activeNoteId,
+  setActiveNoteId,
   onHighlightContextMenu,
 }: {
   pdfProxy: pdfjsLib.PDFDocumentProxy | null;
   pageNum: number;
   scale: number;
-  renderScale: number;
   docId: string;
+  paperTheme: string;
   highlights: ReturnType<typeof useAppStore.getState>["docs"][0]["pdfHighlights"];
+  notes: ReturnType<typeof useAppStore.getState>["docs"][0]["pdfNotes"];
+  activeNoteId: string | null;
+  setActiveNoteId: (id: string | null) => void;
   onHighlightContextMenu: (x: number, y: number, highlightId: string, pageNum: number) => void;
 }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const textLayerRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
-  const [dimensions, setDimensions] = useState<{ width: number; height: number } | null>(null);
+  const [baseSize, setBaseSize] = useState<{ width: number; height: number } | null>(null);
   const [isVisible, setIsVisible] = useState(false);
 
-  // 1. 计算当前页面在 1.0 比例下的固有尺寸（用于在未渲染时稳定占位，保证滚动条平滑）
+  // 1. 固有尺寸（1.0 比例下）只获取一次，后续缩放时尺寸同步计算，杜绝外框与内容分离的两步缩放
   useEffect(() => {
     if (!pdfProxy) return;
     let cancel = false;
     void pdfProxy.getPage(pageNum).then((page) => {
       if (cancel) return;
-      const viewport = page.getViewport({ scale });
-      setDimensions({ width: viewport.width, height: viewport.height });
+      const vp = page.getViewport({ scale: 1.0 });
+      setBaseSize({ width: vp.width, height: vp.height });
     });
     return () => {
       cancel = true;
     };
-  }, [pdfProxy, pageNum, scale]);
+  }, [pdfProxy, pageNum]);
+
+  // 同步计算当前 scale 下的像素尺寸
+  const cssWidth = baseSize ? Math.round(baseSize.width * scale) : Math.round(595 * scale);
+  const cssHeight = baseSize ? Math.round(baseSize.height * scale) : Math.round(842 * scale);
 
   // 2. 视口可见性观察器（虚拟化渲染：远离视口的页面不渲染重负载 canvas/textLayer）
   useEffect(() => {
@@ -797,20 +998,19 @@ function PdfPage({
         if (cancel) return;
 
         const dpr = window.devicePixelRatio || 1;
-        const viewport = page.getViewport({ scale: renderScale * dpr });
-        const cssViewport = page.getViewport({ scale: renderScale });
+        const viewport = page.getViewport({ scale: scale * dpr });
+        const cssViewport = page.getViewport({ scale });
 
         const canvas = canvasRef.current;
         if (!canvas) return;
 
-        // 关键修复 1：使用标准 context，不开启 alpha: false，杜绝黑底出现
         const context = canvas.getContext("2d");
         if (!context) return;
 
         canvas.width = viewport.width;
         canvas.height = viewport.height;
 
-        // 关键修复 2：在尺寸变更的第一帧同步绘制纯白背景，避免重绘期间露出黑底
+        // 在尺寸变更的第一帧同步绘制纯白背景，避免重绘期间露出黑底
         context.fillStyle = "#ffffff";
         context.fillRect(0, 0, canvas.width, canvas.height);
 
@@ -852,10 +1052,13 @@ function PdfPage({
       cancel = true;
       if (renderTask) renderTask.cancel();
     };
-  }, [pdfProxy, pageNum, renderScale, isVisible]);
+  }, [pdfProxy, pageNum, scale, isVisible]);
 
-  const cssWidth = dimensions?.width ?? 600;
-  const cssHeight = dimensions?.height ?? 800;
+  // 护眼底色主题颜色查找
+  const activeTheme = useMemo(
+    () => PDF_PAPER_THEMES.find((t) => t.id === paperTheme) || PDF_PAPER_THEMES[0],
+    [paperTheme],
+  );
 
   return (
     <div
@@ -868,10 +1071,29 @@ function PdfPage({
     >
       {isVisible ? (
         <>
-          <canvas ref={canvasRef} className="block select-none" />
+          <canvas
+            ref={canvasRef}
+            style={{
+              width: `${cssWidth}px`,
+              height: `${cssHeight}px`,
+            }}
+            className="block select-none"
+          />
+
+          {/* 舒适护眼纸张底色遮罩（使用 multiply 模式，保持字迹高锐度黑度，纸面呈现米黄/绿豆沙自然质感） */}
+          {paperTheme !== "white" && paperTheme !== "dark" ? (
+            <div
+              style={{
+                backgroundColor: activeTheme.color,
+                mixBlendMode: "multiply",
+              }}
+              className="absolute inset-0 pointer-events-none z-[4]"
+            />
+          ) : null}
+
           <div
             ref={textLayerRef}
-            className="textLayer absolute inset-0 select-text leading-none"
+            className="textLayer absolute inset-0 select-text leading-none z-[6]"
             style={{
               width: `${cssWidth}px`,
               height: `${cssHeight}px`,
@@ -918,11 +1140,187 @@ function PdfPage({
               ))}
             </div>
           ) : null}
+
+          {/* 交互式便签附注图钉与卡片 */}
+          {notes && notes.length > 0 ? (
+            <div className="absolute inset-0 pointer-events-none z-20">
+              {notes.map((note) => (
+                <PdfNoteMarker
+                  key={note.id}
+                  note={note}
+                  docId={docId}
+                  isOpen={activeNoteId === note.id}
+                  onOpen={() => setActiveNoteId(note.id)}
+                  onClose={() => setActiveNoteId(null)}
+                />
+              ))}
+            </div>
+          ) : null}
         </>
       ) : (
         /* 视口外虚拟骨架占位 */
         <div className="flex h-full w-full items-center justify-center text-[12px] text-faint bg-white">
           <span className="font-mono opacity-40">第 {pageNum} 页</span>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** 交互式便签附注图钉与卡片组件 */
+function PdfNoteMarker({
+  note,
+  docId,
+  isOpen,
+  onOpen,
+  onClose,
+}: {
+  note: PdfNote;
+  docId: string;
+  isOpen: boolean;
+  onOpen: () => void;
+  onClose: () => void;
+}) {
+  const [content, setContent] = useState(note.content);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  useEffect(() => {
+    setContent(note.content);
+  }, [note.content]);
+
+  useEffect(() => {
+    if (isOpen) {
+      setTimeout(() => textareaRef.current?.focus(), 60);
+    }
+  }, [isOpen]);
+
+  const colorStyles = {
+    yellow: {
+      marker: "bg-amber-400 text-amber-950 border-amber-500 hover:bg-amber-300",
+      card: "border-amber-300 bg-amber-50 dark:bg-neutral-900",
+    },
+    blue: {
+      marker: "bg-sky-400 text-sky-950 border-sky-500 hover:bg-sky-300",
+      card: "border-sky-300 bg-sky-50 dark:bg-neutral-900",
+    },
+    green: {
+      marker: "bg-emerald-400 text-emerald-950 border-emerald-500 hover:bg-emerald-300",
+      card: "border-emerald-300 bg-emerald-50 dark:bg-neutral-900",
+    },
+    purple: {
+      marker: "bg-purple-400 text-purple-950 border-purple-500 hover:bg-purple-300",
+      card: "border-purple-300 bg-purple-50 dark:bg-neutral-900",
+    },
+  }[note.color || "yellow"];
+
+  const handleBlur = () => {
+    if (content !== note.content) {
+      updatePdfNote(docId, note.id, { content });
+    }
+  };
+
+  return (
+    <div
+      style={{
+        left: `${note.xPercent}%`,
+        top: `${note.yPercent}%`,
+      }}
+      className="absolute -translate-x-1/2 -translate-y-1/2 pointer-events-auto z-30"
+      onClick={(e) => e.stopPropagation()}
+      onContextMenu={(e) => e.stopPropagation()}
+    >
+      {/* 便签图钉按钮 */}
+      <button
+        type="button"
+        title={note.content ? `便签：${note.content.slice(0, 30)}` : "点击查看/编辑便签"}
+        onClick={onOpen}
+        className={`flex h-6 w-6 items-center justify-center rounded-full border shadow-md transition-transform hover:scale-110 active:scale-95 ${colorStyles.marker}`}
+      >
+        <Icon name="pin" size={13} strokeWidth={2.2} />
+      </button>
+
+      {/* 展开的便签卡片 */}
+      {isOpen && (
+        <div
+          className={`absolute left-4 top-4 z-50 w-64 rounded-lg border p-3 shadow-xl backdrop-blur-md ${colorStyles.card}`}
+          onClick={(e) => e.stopPropagation()}
+        >
+          <div className="flex items-center justify-between pb-1.5 border-b border-line/60">
+            <div className="flex items-center gap-1.5 text-[11px] font-semibold text-fg">
+              <Icon name="pin" size={12} className="text-accent" />
+              <span>便签附注</span>
+            </div>
+            {/* 颜色切换小圆点 */}
+            <div className="flex items-center gap-1">
+              {(["yellow", "blue", "green", "purple"] as const).map((c) => (
+                <button
+                  key={c}
+                  type="button"
+                  onClick={() => updatePdfNote(docId, note.id, { color: c })}
+                  className={`h-3 w-3 rounded-full border transition-transform ${
+                    note.color === c ? "scale-125 border-fg" : "border-line/60 hover:scale-110"
+                  } ${
+                    c === "yellow"
+                      ? "bg-amber-400"
+                      : c === "blue"
+                        ? "bg-sky-400"
+                        : c === "green"
+                          ? "bg-emerald-400"
+                          : "bg-purple-400"
+                  }`}
+                />
+              ))}
+              <div className="mx-1 h-3 w-px bg-line/60" />
+              <button
+                type="button"
+                title="删除此便签"
+                onClick={() => {
+                  deletePdfNote(docId, note.id);
+                  onClose();
+                }}
+                className="rounded p-0.5 text-danger/80 hover:bg-danger/10 hover:text-danger"
+              >
+                <Icon name="trash" size={12} />
+              </button>
+              <button
+                type="button"
+                title="关闭"
+                onClick={onClose}
+                className="rounded p-0.5 text-muted hover:bg-hover hover:text-fg"
+              >
+                <Icon name="x" size={12} />
+              </button>
+            </div>
+          </div>
+
+          <textarea
+            ref={textareaRef}
+            value={content}
+            onChange={(e) => setContent(e.target.value)}
+            onBlur={handleBlur}
+            placeholder="在此记录对此处的批注、摘要或思考…"
+            rows={3}
+            className="mt-2 w-full resize-none rounded border border-line/70 bg-input p-1.5 text-[12px] text-fg outline-none focus:border-accent"
+          />
+
+          <div className="mt-2 flex items-center justify-between text-[10.5px] text-faint">
+            <span>
+              {new Date(note.createdAt).toLocaleTimeString([], {
+                hour: "2-digit",
+                minute: "2-digit",
+              })}
+            </span>
+            <button
+              type="button"
+              onClick={() => {
+                handleBlur();
+                onClose();
+              }}
+              className="rounded bg-accent px-2 py-0.5 text-[11px] font-medium text-accent-contrast shadow-2xs hover:brightness-105"
+            >
+              完成
+            </button>
+          </div>
         </div>
       )}
     </div>
