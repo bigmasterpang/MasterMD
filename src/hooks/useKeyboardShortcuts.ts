@@ -2,6 +2,7 @@ import { useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { getActiveDoc, useAppStore } from "../stores/appStore";
+import { isMarkdownPath } from "../utils/filePath";
 import { useDialogStore } from "../stores/dialogStore";
 import { useSearchStore } from "../stores/searchStore";
 import { useSettingsStore } from "../stores/settingsStore";
@@ -70,9 +71,14 @@ export function useKeyboardShortcuts(): void {
         case "newDoc":
           void newDocument();
           break;
-        case "viewMode":
-          useAppStore.getState().cycleViewMode();
+        case "viewMode": {
+          // 非 Markdown 文档固定源码模式，不参与视图切换
+          const active = getActiveDoc();
+          if (!active?.filePath || isMarkdownPath(active.filePath)) {
+            useAppStore.getState().cycleViewMode();
+          }
           break;
+        }
         case "search":
           useSearchStore.getState().open(false);
           break;

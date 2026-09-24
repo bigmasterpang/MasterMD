@@ -9,7 +9,7 @@ import {
   LARGE_FILE_BYTES,
   OPEN_DIALOG_FILTERS,
 } from "./constants";
-import { fileName, isOpenablePath, isTextPath, samePath } from "./filePath";
+import { fileName, isMarkdownPath, isOpenablePath, samePath } from "./filePath";
 import { formatBytes } from "./timing";
 
 /** 展示用名称 */
@@ -126,7 +126,8 @@ export async function openPath(path: string): Promise<boolean> {
     }
     const doc = docFromPayload(payload);
     useAppStore.getState().addDoc(doc);
-    if (isTextPath(payload.path)) {
+    // 非 Markdown 文件（代码/纯文本）固定以源码模式打开
+    if (!isMarkdownPath(payload.path)) {
       useAppStore.getState().setViewMode("source");
     }
     void addRecentFile(payload.path);
@@ -163,7 +164,7 @@ export async function openDroppedPaths(paths: string[]): Promise<void> {
   if (openable.length === 0) {
     await showMessage(
       "不支持的文件类型",
-      `仅支持打开以下类型：\n.md / .markdown / .mdown / .txt\n\n拖入的文件：\n${paths
+      `目前支持 Markdown（.md/.markdown/.mdown）、纯文本（.txt/.log 等）与常见代码/配置文件（.json/.js/.ts/.py/.java/.sql/.yml 等）。\n\n拖入的文件：\n${paths
         .slice(0, 5)
         .join("\n")}`,
     );
@@ -176,6 +177,55 @@ export async function openDroppedPaths(paths: string[]): Promise<void> {
     );
   }
   await openPath(openable[0]);
+}
+
+/* ------------------------------ 编码与换行符 ------------------------------ */
+
+/**
+ * 切换文件编码（重新解释）：
+ * 从磁盘按新编码重新读取，内容变化时保持「未保存」，保存后即以新编码写回。
+ */
+export async function setDocEncoding(id: string, encoding: string): Promise<void> {
+  const doc = getDocById(id);
+  if (!doc) return;
+  if (!doc.filePath) {
+    useAppStore.getState().patchDoc(id, { encoding });
+    return;
+  }
+  if (doc.isDirty) {
+    const ok = await askConfirm({
+      title: "切换编码",
+      message: "切换编码会重新读取磁盘文件，未保存的修改将丢失。是否继续？",
+      confirmText: "继续切换",
+    });
+    if (!ok) return;
+  }
+  try {
+    const payload = await invoke<FilePayload>("read_markdown_file", {
+      path: doc.filePath,
+      encoding,
+    });
+    // content 变化时 patchDoc 会自动重算 isDirty：不同即视为待保存
+    useAppStore.getState().patchDoc(id, {
+      content: payload.content,
+      encoding,
+      eol: payload.eol ?? doc.eol,
+      size: payload.size,
+      modifiedAt: payload.modifiedAt,
+    });
+  } catch (error) {
+    await showMessage("切换编码失败", String(error));
+  }
+}
+
+/** 切换换行符（保存时统一转换） */
+export function setDocEol(id: string, eol: string): void {
+  const doc = getDocById(id);
+  if (!doc) return;
+  const lf = doc.content.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+  const converted =
+    eol === "crlf" ? lf.replace(/\n/g, "\r\n") : eol === "cr" ? lf.replace(/\n/g, "\r") : lf;
+  useAppStore.getState().patchDoc(id, { eol, isDirty: converted !== doc.savedContent });
 }
 
 /* ------------------------------ 保存文件 ------------------------------ */
@@ -198,6 +248,8 @@ export async function saveDoc(id: string): Promise<boolean> {
       path: doc.filePath,
       content: doc.content,
       encryptedHeader: doc.encryptedHeader,
+      encoding: doc.encoding,
+      eol: doc.eol,
     });
     markSelfWrite();
     useAppStore.getState().patchDoc(id, {
@@ -228,6 +280,8 @@ export async function saveDocAs(id: string): Promise<boolean> {
       path: target,
       content: doc.content,
       encryptedHeader: doc.encryptedHeader,
+      encoding: doc.encoding,
+      eol: doc.eol,
     });
     markSelfWrite();
     const oldPath = doc.filePath;
@@ -306,6 +360,8 @@ export async function reloadDocFromDisk(id: string): Promise<boolean> {
       isDirty: false,
       encrypted,
       encryptedHeader: payload.encryptedHeader ?? null,
+      encoding: payload.encoding ?? doc.encoding,
+      eol: payload.eol ?? doc.eol,
       readOnly: payload.size > LARGE_FILE_BYTES,
       modifiedAt: payload.modifiedAt,
       size: payload.size,

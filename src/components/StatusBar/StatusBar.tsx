@@ -3,14 +3,21 @@ import { useAppStore } from "../../stores/appStore";
 import { useUpdateStore } from "../../stores/updateStore";
 import { Icon } from "../common/Icon";
 import { countWords, formatBytes } from "../../utils/timing";
-import { APP_NAME } from "../../utils/constants";
-import { fileName } from "../../utils/filePath";
+import { APP_NAME, ENCODINGS, EOL_OPTIONS } from "../../utils/constants";
+import { docKindOf, extName, fileName } from "../../utils/filePath";
+import { setDocEncoding, setDocEol } from "../../utils/fileActions";
 import { extractFrontMatter } from "../../utils/frontMatter";
 
 const VIEW_LABEL = {
   preview: "预览",
   source: "源码",
   split: "分屏",
+} as const;
+
+const KIND_LABEL = {
+  markdown: "Markdown",
+  text: "纯文本",
+  code: "代码",
 } as const;
 
 /** 原始字数：源码中的字符数（不含空白），预览字数：渲染后可见字符数 */
@@ -101,7 +108,40 @@ export function StatusBar() {
         <span>就绪</span>
       )}
 
-      <span title="编码">UTF-8</span>
+      {doc ? (
+        <>
+          <span title="文件类型">
+            {KIND_LABEL[docKindOf(doc.filePath)]}
+            {extName(doc.filePath ?? "") ? ` · ${extName(doc.filePath ?? "")}` : ""}
+          </span>
+          <select
+            value={doc.encoding}
+            onChange={(event) => void setDocEncoding(doc.id, event.target.value)}
+            title="文件编码：切换后会按新编码重新读取，保存时按此编码写回"
+            className="h-5 rounded border border-line bg-transparent px-1 text-[11px] text-muted hover:text-fg"
+          >
+            {ENCODINGS.map((enc) => (
+              <option key={enc.id} value={enc.id}>
+                {enc.label}
+              </option>
+            ))}
+          </select>
+          <select
+            value={doc.eol}
+            onChange={(event) => setDocEol(doc.id, event.target.value)}
+            title="换行符：保存时统一转换"
+            className="h-5 rounded border border-line bg-transparent px-1 text-[11px] text-muted hover:text-fg"
+          >
+            {EOL_OPTIONS.map((option) => (
+              <option key={option.id} value={option.id}>
+                {option.label}
+              </option>
+            ))}
+          </select>
+        </>
+      ) : (
+        <span title="编码">UTF-8</span>
+      )}
       {doc?.encrypted ? (
         <span
           className="flex items-center gap-1 text-accent"

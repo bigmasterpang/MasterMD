@@ -1,6 +1,6 @@
 //! 文件读写相关命令：读取 / 写入 / 保存对话框 / 路径辅助。
 
-use crate::commands::esafenet;
+use crate::commands::{esafenet, textcodec};
 use serde::Serialize;
 use std::path::{Path, PathBuf};
 use std::time::UNIX_EPOCH;
@@ -17,6 +17,10 @@ pub struct FilePayload {
     pub encrypted: bool,
     /// 加密文档的 4096 字节文件头（base64），保存时用于重新加密
     pub encrypted_header: Option<String>,
+    /// 文件编码（检测结果或指定值）
+    pub encoding: String,
+    /// 换行符：lf / crlf / cr
+    pub eol: String,
 }
 
 /// 校验并规范化用户传入的路径，拒绝空路径与含 NUL 的路径。
@@ -39,32 +43,11 @@ pub fn modified_ms(meta: &std::fs::Metadata) -> u64 {
         .unwrap_or(0)
 }
 
-/// 将字节解码为文本：
-/// 1. UTF-8 BOM / UTF-16 LE / UTF-16 BE BOM 优先识别；
-/// 2. 否则按 UTF-8 解析，非法字节用替换字符兜底，保证不丢内容。
-fn decode_text(bytes: &[u8]) -> String {
-    if bytes.len() >= 3 && bytes[0] == 0xEF && bytes[1] == 0xBB && bytes[2] == 0xBF {
-        return String::from_utf8_lossy(&bytes[3..]).into_owned();
-    }
-    if bytes.len() >= 2 && bytes[0] == 0xFF && bytes[1] == 0xFE {
-        let units: Vec<u16> = bytes[2..]
-            .chunks_exact(2)
-            .map(|c| u16::from_le_bytes([c[0], c[1]]))
-            .collect();
-        return String::from_utf16_lossy(&units);
-    }
-    if bytes.len() >= 2 && bytes[0] == 0xFE && bytes[1] == 0xFF {
-        let units: Vec<u16> = bytes[2..]
-            .chunks_exact(2)
-            .map(|c| u16::from_be_bytes([c[0], c[1]]))
-            .collect();
-        return String::from_utf16_lossy(&units);
-    }
-    String::from_utf8_lossy(bytes).into_owned()
-}
-
 #[tauri::command]
-pub async fn read_markdown_file(path: String) -> Result<FilePayload, String> {
+pub async fn read_markdown_file(
+    path: String,
+    encoding: Option<String>,
+) -> Result<FilePayload, String> {
     let p = validate_path(&path)?;
     let meta = std::fs::metadata(&p).map_err(|e| format!("无法读取文件信息: {e}"))?;
     if meta.is_dir() {
@@ -76,27 +59,39 @@ pub async fn read_markdown_file(path: String) -> Result<FilePayload, String> {
         Some(decrypted) => (decrypted, true, Some(base64_encode(&raw[..4096]))),
         None => (raw, false, None),
     };
+    // 编码：优先使用调用方指定值（用于「以其它编码重新解释」），否则自动检测
+    let enc = encoding
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| textcodec::detect_encoding(&bytes).to_string());
+    let content = textcodec::decode_with(&bytes, &enc);
+    let eol = textcodec::detect_eol(&content).to_string();
     Ok(FilePayload {
         path: p.to_string_lossy().to_string(),
-        content: decode_text(&bytes),
+        content,
         modified_at: modified_ms(&meta),
         size: meta.len(),
         encrypted,
         encrypted_header: header,
+        encoding: enc,
+        eol,
     })
 }
 
-/// 写入文件，UTF-8 无 BOM。返回写入后的修改时间（毫秒）供前端刷新基线。
+/// 写入文件。返回写入后的修改时间（毫秒）供前端刷新基线。
 ///
-/// 加密文档保持加密格式写回：
-/// 1. 前端传入打开时的 4096 字节文件头（base64）时，用该头重新加密；
-/// 2. 否则若目标文件本身是加密文档（如新建文档覆盖加密文件），沿用其文件头；
-/// 3. 都不是时按普通文本原样写入。
+/// - 换行符：按 eol 统一转换（默认 lf）
+/// - 编码：按 encoding 编码（默认 utf-8）
+/// - 加密文档保持加密格式写回：
+///   1. 前端传入打开时的 4096 字节文件头（base64）时，用该头重新加密；
+///   2. 否则若目标文件本身是加密文档（如新建文档覆盖加密文件），沿用其文件头；
+///   3. 都不是时按普通文本原样写入。
 #[tauri::command]
 pub async fn write_markdown_file(
     path: String,
     content: String,
     encrypted_header: Option<String>,
+    encoding: Option<String>,
+    eol: Option<String>,
 ) -> Result<u64, String> {
     let p = validate_path(&path)?;
     if let Some(parent) = p.parent() {
@@ -116,9 +111,13 @@ pub async fn write_markdown_file(
         }
     };
 
+    let enc = encoding.filter(|s| !s.is_empty()).unwrap_or_else(|| "utf-8".to_string());
+    let normalized = textcodec::normalize_eol(&content, eol.as_deref().unwrap_or("lf"));
+    let plain = textcodec::encode_with(&normalized, &enc);
+
     let bytes = match header {
-        Some(head) => esafenet::encrypt_esafenet(&head, content.as_bytes()),
-        None => content.as_bytes().to_vec(),
+        Some(head) => esafenet::encrypt_esafenet(&head, &plain),
+        None => plain,
     };
 
     std::fs::write(&p, &bytes).map_err(|e| format!("写入文件失败: {e}"))?;

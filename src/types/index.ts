@@ -17,6 +17,10 @@ export interface FilePayload {
   encrypted?: boolean;
   /** 加密文档的 4096 字节文件头（base64），保存时用于按原格式加密写回 */
   encryptedHeader?: string | null;
+  /** 检测（或指定）的文件编码 */
+  encoding?: string;
+  /** 检测到的换行符：lf / crlf / cr */
+  eol?: string;
 }
 
 /** 后端 file-changed 事件载荷 */
@@ -49,6 +53,10 @@ export interface DocState {
   encrypted: boolean;
   /** 加密文档的文件头（base64），保存时用于重新加密 */
   encryptedHeader: string | null;
+  /** 文件编码（保存时按此编码写回） */
+  encoding: string;
+  /** 换行符（保存时统一转换为该换行符） */
+  eol: string;
   /** 磁盘上的最后修改时间基线（毫秒） */
   modifiedAt: number;
   size: number;

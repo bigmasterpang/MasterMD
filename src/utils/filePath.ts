@@ -1,8 +1,12 @@
 import {
+  CODE_EXTENSIONS,
   MARKDOWN_EXTENSIONS,
   OPENABLE_EXTENSIONS,
   TEXT_EXTENSIONS,
 } from "./constants";
+
+/** 文档类别：Markdown（预览/大纲/导出）/ 代码（语法高亮）/ 纯文本 */
+export type DocKind = "markdown" | "text" | "code";
 
 /** 统一使用反斜杠，便于 Windows 路径比较 */
 export function normalizeSlashes(p: string): string {
@@ -28,6 +32,17 @@ export function dirName(p: string): string {
 
 export function isMarkdownPath(p: string): boolean {
   return MARKDOWN_EXTENSIONS.includes(extName(p));
+}
+
+/** 文档类别（未保存的新文档按 Markdown 处理） */
+export function docKindOf(p: string | null | undefined): DocKind {
+  if (!p) return "markdown";
+  const ext = extName(p);
+  if (MARKDOWN_EXTENSIONS.includes(ext)) return "markdown";
+  if (CODE_EXTENSIONS.includes(ext)) return "code";
+  if (TEXT_EXTENSIONS.includes(ext)) return "text";
+  // 未登记扩展名：有扩展名按代码处理（尝试高亮），无扩展名按纯文本
+  return ext === "" ? "text" : "code";
 }
 
 export function isTextPath(p: string): boolean {

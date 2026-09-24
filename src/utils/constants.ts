@@ -8,17 +8,64 @@ export const PROJECT_URL = "https://github.com/bigmasterpang/MasterMD";
 /** 可打开为 Markdown 的扩展名 */
 export const MARKDOWN_EXTENSIONS = ["md", "markdown", "mdown", "mkd", "mkdn"];
 
-/** 纯文本扩展名（以源码模式打开） */
-export const TEXT_EXTENSIONS = ["txt"];
+/** 纯文本扩展名（以源码模式打开，无语法高亮） */
+export const TEXT_EXTENSIONS = ["txt", "text", "log", "nfo", "me"];
 
-export const OPENABLE_EXTENSIONS = [...MARKDOWN_EXTENSIONS, ...TEXT_EXTENSIONS];
+/** 代码 / 配置类扩展名（按扩展名匹配语法高亮） */
+export const CODE_EXTENSIONS = [
+  // 配置与数据
+  "json", "jsonc", "json5", "yml", "yaml", "toml", "ini", "cfg", "conf", "properties", "env",
+  "csv", "tsv", "xml", "plist", "reg",
+  // Web
+  "html", "htm", "xhtml", "css", "scss", "less", "sass", "js", "mjs", "cjs", "jsx", "ts", "tsx",
+  "vue", "svelte", "astro",
+  // 脚本
+  "py", "rb", "php", "pl", "pm", "lua", "sh", "bash", "zsh", "bat", "cmd", "ps1", "psm1",
+  "groovy", "r", "jl", "tcl", "ahk", "vbs",
+  // 编译型语言
+  "c", "h", "cc", "cpp", "cxx", "hpp", "hh", "cs", "java", "kt", "kts", "scala", "go", "rs",
+  "swift", "m", "mm", "dart", "pas", "f90", "f95", "asm", "s", "vb", "fs", "hs", "erl", "ex",
+  "clj", "lisp", "el", "nim", "cr", "zig",
+  // 数据与其它
+  "sql", "proto", "graphql", "gql", "diff", "patch", "tex", "bib", "cmake", "gradle", "mk",
+  "dockerfile", "makefile", "gitignore", "editorconfig", "nginx", "service", "srt", "vtt",
+];
+
+export const OPENABLE_EXTENSIONS = [
+  ...MARKDOWN_EXTENSIONS,
+  ...TEXT_EXTENSIONS,
+  ...CODE_EXTENSIONS,
+];
 
 /** 打开对话框过滤器 */
 export const OPEN_DIALOG_FILTERS = [
   { name: "Markdown 文件", extensions: MARKDOWN_EXTENSIONS },
-  { name: "文本文件", extensions: TEXT_EXTENSIONS },
+  { name: "文本与代码文件", extensions: [...TEXT_EXTENSIONS, ...CODE_EXTENSIONS] },
   { name: "所有文件", extensions: ["*"] },
 ];
+
+/** 支持的文件编码（与 Rust 端保持一致） */
+export const ENCODINGS = [
+  { id: "utf-8", label: "UTF-8" },
+  { id: "utf-8-bom", label: "UTF-8 BOM" },
+  { id: "gb18030", label: "GB18030 / GBK" },
+  { id: "big5", label: "Big5 繁体" },
+  { id: "shift_jis", label: "Shift-JIS 日文" },
+  { id: "euc-kr", label: "EUC-KR 韩文" },
+  { id: "utf-16le", label: "UTF-16 LE" },
+  { id: "utf-16be", label: "UTF-16 BE" },
+  { id: "windows-1252", label: "Latin-1 (1252)" },
+] as const;
+
+export type EncodingId = (typeof ENCODINGS)[number]["id"];
+
+export const EOL_OPTIONS = [
+  { id: "lf", label: "LF" },
+  { id: "crlf", label: "CRLF" },
+  { id: "cr", label: "CR" },
+] as const;
+
+export type EolId = (typeof EOL_OPTIONS)[number]["id"];
 
 /** 超过该大小提示只读打开 */
 export const LARGE_FILE_BYTES = 10 * 1024 * 1024;

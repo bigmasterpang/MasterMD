@@ -1,5 +1,6 @@
 pub mod esafenet;
 pub mod file;
+pub mod textcodec;
 pub mod image;
 #[cfg(windows)]
 pub mod pdf;

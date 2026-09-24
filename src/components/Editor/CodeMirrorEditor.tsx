@@ -18,6 +18,7 @@ import {
   foldGutter,
   foldKeymap,
   indentUnit,
+  LanguageDescription,
 } from "@codemirror/language";
 import {
   closeBrackets,
@@ -26,6 +27,7 @@ import {
 } from "@codemirror/autocomplete";
 import { search } from "@codemirror/search";
 import { useAppStore, getDocById, getActiveDoc } from "../../stores/appStore";
+import { isMarkdownPath } from "../../utils/filePath";
 import { useSearchStore } from "../../stores/searchStore";
 import { useSettingsStore } from "../../stores/settingsStore";
 import { registerEditor } from "../../utils/editorBridge";
@@ -45,10 +47,18 @@ const wrapCompartment = new Compartment();
 const lineNumberCompartment = new Compartment();
 const tabCompartment = new Compartment();
 const readOnlyCompartment = new Compartment();
+/** 语言支持：Markdown 或按扩展名匹配的代码语言 */
+const langCompartment = new Compartment();
+
+/** Markdown 语言扩展（含代码块内嵌语言） */
+function markdownSupport(): Extension {
+  return markdown({ base: markdownLanguage, codeLanguages: languages });
+}
 
 function buildExtensions(isDark: boolean): Extension[] {
   const settings = useSettingsStore.getState();
   const doc = getActiveDoc();
+  const isMd = !doc?.filePath || isMarkdownPath(doc.filePath);
   return [
     lineNumberCompartment.of(settings.showLineNumbers ? lineNumbers() : []),
     highlightActiveLine(),
@@ -63,13 +73,13 @@ function buildExtensions(isDark: boolean): Extension[] {
     closeBrackets(),
     search({ top: true }),
     searchHighlightField,
-    markdown({ base: markdownLanguage, codeLanguages: languages }),
+    langCompartment.of(isMd ? markdownSupport() : []),
     EditorState.allowMultipleSelections.of(true),
     indentUnit.of(" ".repeat(settings.tabSize)),
     tabCompartment.of(EditorState.tabSize.of(settings.tabSize)),
     wrapCompartment.of(settings.wordWrap ? EditorView.lineWrapping : []),
     readOnlyCompartment.of(EditorState.readOnly.of(Boolean(doc?.readOnly))),
-    placeholder("在此输入 Markdown 内容……"),
+    placeholder(isMd ? "在此输入 Markdown 内容……" : "在此输入内容……"),
     themeCompartment.of(createEditorTheme(isDark)),
     keymap.of([
       indentWithTab,
@@ -125,6 +135,9 @@ export function CodeMirrorEditor({ docId, isDark }: Props) {
         }),
         EditorView.domEventHandlers({
           paste: (event) => {
+            // 图片粘贴仅用于 Markdown 文档
+            const path = getDocById(docId)?.filePath ?? "";
+            if (path && !isMarkdownPath(path)) return false;
             const hasImage = Array.from(event.clipboardData?.items ?? []).some(
               (item) => item.type.startsWith("image/"),
             );
@@ -138,6 +151,22 @@ export function CodeMirrorEditor({ docId, isDark }: Props) {
 
     const view = new EditorView({ state, parent: host });
     viewRef.current = view;
+
+    // 代码文件：按扩展名/文件名懒加载对应语言高亮
+    const docInfo = getDocById(docId);
+    if (docInfo?.filePath && !isMarkdownPath(docInfo.filePath)) {
+      const desc = LanguageDescription.matchFilename(languages, docInfo.filePath);
+      if (desc) {
+        void desc
+          .load()
+          .then((support) => {
+            viewRef.current?.dispatch({ effects: langCompartment.reconfigure(support) });
+          })
+          .catch(() => {
+            /* 语言包加载失败时保持无高亮 */
+          });
+      }
+    }
 
     // 恢复滚动位置
     const saved = getDocById(docId)?.scrollTop ?? 0;

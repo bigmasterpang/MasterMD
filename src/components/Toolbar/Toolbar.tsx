@@ -41,7 +41,8 @@ import {
   saveActive,
   saveActiveAs,
 } from "../../utils/fileActions";
-import { fileName } from "../../utils/filePath";
+import { fileName, isMarkdownPath } from "../../utils/filePath";
+import { openPath as openWithSystem } from "@tauri-apps/plugin-opener";
 import { parseDoc } from "../../utils/markdown";
 
 interface ToolbarProps {
@@ -103,6 +104,8 @@ export function Toolbar({ previewRef, isDark }: ToolbarProps) {
 
   const hasDoc = Boolean(doc);
   const editable = viewMode !== "preview" && Boolean(doc) && !doc?.readOnly;
+  /** 非 Markdown 文档（代码/纯文本）隐藏 Markdown 专属操作 */
+  const isMarkdown = !doc?.filePath || isMarkdownPath(doc.filePath);
 
   const cycleTheme = () => {
     const idx = THEME_ORDER.indexOf(theme);
@@ -306,7 +309,7 @@ export function Toolbar({ previewRef, isDark }: ToolbarProps) {
             icon={item.icon}
             label={item.label}
             active={viewMode === item.mode}
-            disabled={!hasDoc}
+            disabled={!hasDoc || !isMarkdown}
             onClick={() => useAppStore.getState().setViewMode(item.mode)}
           />
         ))}
@@ -319,14 +322,14 @@ export function Toolbar({ previewRef, isDark }: ToolbarProps) {
         label="标题"
         title="标题级别"
         groups={headingMenu}
-        disabled={!editable}
+        disabled={!editable || !isMarkdown}
       />
       <DropdownMenu
         icon="list"
         label="列表"
         title="列表与提示块"
         groups={listMenu}
-        disabled={!editable}
+        disabled={!editable || !isMarkdown}
         width={230}
       />
       <DropdownMenu
@@ -334,7 +337,7 @@ export function Toolbar({ previewRef, isDark }: ToolbarProps) {
         label="插入"
         title="插入元素"
         groups={insertMenu}
-        disabled={!editable}
+        disabled={!editable || !isMarkdown}
         width={230}
       />
       <DropdownMenu
@@ -342,7 +345,7 @@ export function Toolbar({ previewRef, isDark }: ToolbarProps) {
         label="格式"
         title="文本格式"
         groups={formatMenu}
-        disabled={!editable}
+        disabled={!editable || !isMarkdown}
         width={230}
       />
 
@@ -366,9 +369,10 @@ export function Toolbar({ previewRef, isDark }: ToolbarProps) {
         icon="list"
         label="大纲侧栏"
         active={outlineVisible}
+        disabled={!isMarkdown}
         onClick={() => useAppStore.getState().toggleOutline()}
       />
-      {viewMode === "split" ? (
+      {viewMode === "split" && isMarkdown ? (
           <ToolButton
             icon="arrow-up-down"
             label={syncScroll ? "滚动同步：开" : "滚动同步：关"}
@@ -379,12 +383,21 @@ export function Toolbar({ previewRef, isDark }: ToolbarProps) {
 
       <div className="flex-1" />
 
+      <ToolButton
+        icon="external-link"
+        label="用系统默认程序打开"
+        disabled={!doc?.filePath}
+        onClick={() => {
+          const path = doc?.filePath;
+          if (path) void openWithSystem(path);
+        }}
+      />
       <DropdownMenu
         icon="download"
         label="导出"
         title="导出文档"
         groups={exportMenu}
-        disabled={!hasDoc}
+        disabled={!hasDoc || !isMarkdown}
         align="right"
         width={200}
       />

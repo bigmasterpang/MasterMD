@@ -41,13 +41,8 @@ const WuxiaPanel = lazy(() =>
   import("./wuxia/ui/WuxiaPanel").then((m) => ({ default: m.WuxiaPanel })),
 );
 import { useSettingsStore } from "./stores/settingsStore";
-import {
-  displayName,
-  loadRecentFiles,
-  openDroppedPaths,
-  openPath,
-  saveDoc,
-} from "./utils/fileActions";
+import { displayName, loadRecentFiles, openDroppedPaths, openPath, saveDoc } from "./utils/fileActions";
+import { isMarkdownPath } from "./utils/filePath";
 import { flushUiState, isTauri, restoreSession, startSessionTracking } from "./utils/persist";
 import { REALTIME_PREVIEW_LIMIT } from "./utils/constants";
 
@@ -66,7 +61,9 @@ export default function App() {
   const outlineVisible = useAppStore((s) => s.outlineVisible);
   const gameOpen = useAppStore((s) => s.gameOpen);
   const content = doc?.content ?? "";
-  const rendered = useMarkdown(content, viewMode);
+  /** 非 Markdown 文件（代码/纯文本）只提供源码编辑 */
+  const isMarkdown = !doc?.filePath || isMarkdownPath(doc.filePath);
+  const rendered = useMarkdown(isMarkdown ? content : "", viewMode);
 
   const previewRef = useRef<HTMLDivElement>(null);
   const [dragOver, setDragOver] = useState(false);
@@ -198,7 +195,9 @@ export default function App() {
       <TabBar />
 
       <div className="flex min-h-0 flex-1">
-        {doc && outlineVisible && !gameOpen ? <OutlineSidebar previewRef={previewRef} /> : null}
+        {doc && outlineVisible && !gameOpen && isMarkdown ? (
+          <OutlineSidebar previewRef={previewRef} />
+        ) : null}
 
         <div className="relative min-w-0 flex-1">
           {gameOpen ? (
@@ -213,6 +212,9 @@ export default function App() {
             </Suspense>
           ) : !doc ? (
             <WelcomeScreen />
+          ) : !isMarkdown ? (
+            // 代码 / 纯文本：只提供源码编辑
+            <CodeMirrorEditor key={doc.id} docId={doc.id} isDark={isDark} />
           ) : viewMode === "preview" ? (
             livePreview ? (
               previewNode

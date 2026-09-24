@@ -79,11 +79,12 @@ export function WelcomeScreen() {
 
         <div className="rounded-[var(--radius)] border border-dashed border-line-strong px-4 py-3 text-[12px] leading-relaxed text-muted">
           <div className="mb-1 font-medium text-fg">提示</div>
-          将 <code className="rounded bg-panel px-1">.md</code> /{" "}
-          <code className="rounded bg-panel px-1">.markdown</code> /{" "}
-          <code className="rounded bg-panel px-1">.txt</code> 文件拖入窗口即可打开；
+          支持 Markdown（.md / .markdown）、纯文本（.txt / .log）与常见代码 / 配置文件
+          （.json / .js / .ts / .py / .java / .sql / .yml 等，自动语法高亮）；
           <br />
-          常用快捷键：Ctrl+O 打开 · Ctrl+S 保存 · Ctrl+E 切换视图 · F1 快捷键
+          文件拖入窗口即可打开，也可用 <code className="rounded bg-panel px-1">Ctrl+O</code> 选择；
+          <br />
+          常用快捷键：Ctrl+S 保存 · Ctrl+E 切换视图 · Ctrl+F 查找 · F1 快捷键
         </div>
 
         <div className="mt-6 text-center text-[11px] text-faint">
