@@ -1,6 +1,8 @@
 import { useMemo } from "react";
 import { ContextMenu, type ContextMenuItem } from "../common/ContextMenu";
 import { showMessage } from "../../stores/dialogStore";
+import { useAppStore } from "../../stores/appStore";
+import { isMarkdownDoc } from "../../utils/filePath";
 import {
   clearFormatting,
   copySelection,
@@ -14,6 +16,7 @@ import {
   insertTable,
   insertToc,
   pasteFromClipboard,
+  selectAllText,
   setHeading,
   shiftHeading,
   toggleBold,
@@ -39,6 +42,9 @@ interface Props {
 
 /** 编辑器右键菜单：二级菜单分组，避免过长 */
 export function EditorContextMenu({ x, y, hasSelection, onClose }: Props) {
+  const activeDoc = useAppStore((s) => s.docs.find((d) => d.id === s.activeId) ?? null);
+  const isMd = isMarkdownDoc(activeDoc);
+
   const groups = useMemo<ContextMenuItem[][]>(() => {
     const clipboard: ContextMenuItem[] = [
       { label: "剪切", hint: "Ctrl+X", onClick: () => void cutSelection() },
@@ -63,6 +69,7 @@ export function EditorContextMenu({ x, y, hasSelection, onClose }: Props) {
           }
         },
       },
+      { label: "全选", hint: "Ctrl+A", onClick: selectAllText },
     ];
 
     const formatSubmenu: ContextMenuItem[][] = [
@@ -150,6 +157,19 @@ export function EditorContextMenu({ x, y, hasSelection, onClose }: Props) {
       ],
     ];
 
+    // 非 Markdown 文档（代码、纯文本、未保存空白文件）：屏蔽所有 Markdown 格式与插入
+    if (!isMd) {
+      if (hasSelection) {
+        return [
+          clipboard,
+          [
+            { label: "大小写转换", submenu: transformSubmenu },
+          ],
+        ];
+      }
+      return [clipboard];
+    }
+
     if (hasSelection) {
       return [
         clipboard,
@@ -171,7 +191,7 @@ export function EditorContextMenu({ x, y, hasSelection, onClose }: Props) {
         { label: "提示块", submenu: calloutSubmenu },
       ],
     ];
-  }, [hasSelection]);
+  }, [hasSelection, isMd]);
 
   return <ContextMenu x={x} y={y} groups={groups} onClose={onClose} />;
 }

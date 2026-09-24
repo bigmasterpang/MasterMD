@@ -3,9 +3,18 @@ import { Icon, type IconName } from "../common/Icon";
 import { useAppStore } from "../../stores/appStore";
 import { useSettingsStore } from "../../stores/settingsStore";
 import { scrollToLine } from "../../utils/editorCommands";
-import { isMarkdownDoc } from "../../utils/filePath";
+import { isMarkdownDoc, isPdfDoc } from "../../utils/filePath";
 import { analyzeSymbols, navSupported, type NavItem, type NavKind } from "../../utils/outline";
 import type { HeadingItem } from "../../types";
+import {
+  deletePdfPage,
+  jumpToPdfPage,
+  PdfThumbnail,
+  reorderPdfPages,
+  rotatePdfPage,
+  usePdfOutline,
+  usePdfProxy,
+} from "../PDF/pdfService";
 
 interface Props {
   previewRef?: React.RefObject<HTMLDivElement | null>;
@@ -31,6 +40,256 @@ const KIND_ICONS: Record<NavKind, IconName> = {
 
 export function OutlineSidebar({ previewRef, standalone = false }: Props) {
   const doc = useAppStore((s) => s.docs.find((d) => d.id === s.activeId) ?? null);
+
+  // 如果当前是 PDF 文档，渲染专用的 PDF 大纲书签与页面缩略图侧栏
+  if (doc && isPdfDoc(doc)) {
+    return <PdfOutlineSection doc={doc} standalone={standalone} />;
+  }
+
+  return <MarkdownOutlineSection doc={doc} previewRef={previewRef} standalone={standalone} />;
+}
+
+/** PDF 专用大纲与缩略图导航组件 */
+function PdfOutlineSection({
+  doc,
+  standalone,
+}: {
+  doc: NonNullable<ReturnType<typeof useAppStore.getState>["docs"][0]>;
+  standalone?: boolean;
+}) {
+  const pdfProxy = usePdfProxy(doc.id);
+  const pdfOutline = usePdfOutline(doc.id);
+  const [tab, setTab] = useState<"outline" | "thumbnails">("outline");
+  const [filterText, setFilterText] = useState("");
+  const [draggedPageIndex, setDraggedPageIndex] = useState<number | null>(null);
+  const listRef = useRef<HTMLDivElement>(null);
+
+  const numPages = doc.pdfTotalPages || pdfProxy?.numPages || 1;
+  const currentPage = doc.pdfCurrentPage || 1;
+
+  // 过滤大纲
+  const filteredOutline = useMemo(() => {
+    const q = filterText.trim().toLowerCase();
+    if (!q) return pdfOutline;
+    return pdfOutline.filter((item) => item.title.toLowerCase().includes(q));
+  }, [pdfOutline, filterText]);
+
+  // 缩略图自动滚动跟随当前高亮页
+  useEffect(() => {
+    if (tab === "thumbnails" && listRef.current) {
+      const el = listRef.current.querySelector<HTMLElement>(`[data-page="${currentPage}"]`);
+      el?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+    }
+  }, [tab, currentPage]);
+
+  const containerClass = standalone
+    ? "print-hide flex w-[260px] shrink-0 flex-col border-r border-line bg-sidebar"
+    : "flex h-full min-h-0 flex-col overflow-hidden bg-sidebar";
+
+  return (
+    <div className={containerClass}>
+      {/* 顶部工具栏 */}
+      <div className="flex h-8 shrink-0 items-center justify-between border-b border-line px-2 text-[11px] font-medium text-faint">
+        <div className="flex items-center gap-1.5">
+          <span className="font-medium uppercase tracking-wide text-fg/80">
+            PDF 导航
+          </span>
+          <span className="rounded bg-hover px-1 py-0.5 text-[10px] text-faint">
+            {numPages} 页
+          </span>
+        </div>
+
+        <div className="flex items-center gap-1">
+          {/* 大纲 / 缩略图切换 */}
+          <div className="flex rounded border border-line bg-input p-0.5">
+            <button
+              type="button"
+              onClick={() => setTab("outline")}
+              title="书签大纲"
+              className={`flex items-center gap-1 rounded px-1.5 py-0.5 text-[10.5px] transition-colors ${
+                tab === "outline"
+                  ? "bg-panel font-medium text-accent shadow-xs"
+                  : "text-muted hover:text-fg"
+              }`}
+            >
+              <Icon name="book-open" size={11} />
+              <span>大纲</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setTab("thumbnails")}
+              title="页面缩略图"
+              className={`flex items-center gap-1 rounded px-1.5 py-0.5 text-[10.5px] transition-colors ${
+                tab === "thumbnails"
+                  ? "bg-panel font-medium text-accent shadow-xs"
+                  : "text-muted hover:text-fg"
+              }`}
+            >
+              <Icon name="grid" size={11} />
+              <span>缩略图</span>
+            </button>
+          </div>
+
+          {standalone ? (
+            <button
+              type="button"
+              title="隐藏侧栏"
+              onClick={() => useAppStore.getState().setOutlineVisible(false)}
+              className="rounded p-0.5 hover:bg-hover hover:text-fg"
+            >
+              <Icon name="x" size={12} />
+            </button>
+          ) : null}
+        </div>
+      </div>
+
+      {tab === "outline" ? (
+        <>
+          {/* 搜索/过滤输入框 */}
+          <div className="border-b border-line/60 px-2 py-1">
+            <div className="flex items-center gap-1 rounded border border-line/80 bg-input px-1.5 py-0.5 text-[11px]">
+              <Icon name="search" size={11} className="text-faint" />
+              <input
+                type="text"
+                value={filterText}
+                onChange={(e) => setFilterText(e.target.value)}
+                placeholder="搜索书签大纲…"
+                className="min-w-0 flex-1 bg-transparent text-fg outline-none placeholder:text-faint"
+              />
+              {filterText ? (
+                <button
+                  type="button"
+                  onClick={() => setFilterText("")}
+                  className="text-faint hover:text-fg"
+                >
+                  <Icon name="x" size={10} />
+                </button>
+              ) : null}
+            </div>
+          </div>
+
+          {/* 大纲书签列表 */}
+          <div ref={listRef} className="min-h-0 flex-1 overflow-auto p-1 font-sans">
+            {filteredOutline.length === 0 ? (
+              <div className="px-3 py-6 text-center text-[12px] text-faint">
+                {filterText ? "没有匹配的书签。" : "当前 PDF 未包含书签大纲。"}
+              </div>
+            ) : (
+              <div className="flex flex-col gap-0.5">
+                {filteredOutline.map((item, idx) => {
+                  const active = item.pageIndex === currentPage;
+                  return (
+                    <div
+                      key={idx}
+                      onClick={() => {
+                        if (item.pageIndex) jumpToPdfPage(doc.id, item.pageIndex);
+                      }}
+                      className={`group flex cursor-pointer items-center justify-between gap-1.5 rounded px-2 py-1.5 text-[12px] transition-colors ${
+                        active
+                          ? "bg-accent-soft-strong font-medium text-accent"
+                          : "text-muted hover:bg-hover hover:text-fg"
+                      }`}
+                    >
+                      <div className="flex min-w-0 items-center gap-1.5">
+                        <Icon
+                          name="file-text"
+                          size={12}
+                          className={`shrink-0 ${
+                            active ? "text-accent" : "text-faint group-hover:text-muted"
+                          }`}
+                        />
+                        <span className="truncate" title={item.title}>
+                          {item.title}
+                        </span>
+                      </div>
+                      {item.pageIndex ? (
+                        <span className="shrink-0 font-mono text-[10.5px] text-faint">
+                          P.{item.pageIndex}
+                        </span>
+                      ) : null}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        </>
+      ) : (
+        /* 页面缩略图列表 */
+        <div ref={listRef} className="min-h-0 flex-1 overflow-y-auto p-2 scrollbar-thin">
+          <div className="flex flex-col gap-3">
+            {Array.from({ length: numPages }, (_, i) => i + 1).map((pNum) => (
+              <div
+                key={pNum}
+                data-page={pNum}
+                draggable
+                onDragStart={() => setDraggedPageIndex(pNum - 1)}
+                onDragOver={(e) => e.preventDefault()}
+                onDrop={() => {
+                  if (draggedPageIndex !== null) {
+                    void reorderPdfPages(doc.id, draggedPageIndex, pNum - 1);
+                    setDraggedPageIndex(null);
+                  }
+                }}
+                onClick={() => jumpToPdfPage(doc.id, pNum)}
+                className={`group relative flex cursor-pointer flex-col items-center rounded-lg border p-1.5 transition-all ${
+                  currentPage === pNum
+                    ? "border-accent bg-accent/10 shadow-xs"
+                    : "border-line bg-panel hover:border-line-strong hover:bg-hover"
+                }`}
+              >
+                <PdfThumbnail
+                  pdfProxy={pdfProxy}
+                  pageNum={pNum}
+                  active={currentPage === pNum}
+                />
+
+                <div className="mt-1 flex w-full items-center justify-between px-1 text-[11px] text-muted">
+                  <span className="font-mono">第 {pNum} 页</span>
+                  <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
+                    <button
+                      type="button"
+                      title="旋转此页"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        void rotatePdfPage(doc.id, pNum, true);
+                      }}
+                      className="rounded p-0.5 hover:bg-accent/20 hover:text-accent"
+                    >
+                      <Icon name="rotate-cw" size={11} />
+                    </button>
+                    <button
+                      type="button"
+                      title="删除此页"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        void deletePdfPage(doc.id, pNum);
+                      }}
+                      className="rounded p-0.5 hover:bg-danger/20 hover:text-danger"
+                    >
+                      <Icon name="trash" size={11} />
+                    </button>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** Markdown 与源码符号大纲组件 */
+function MarkdownOutlineSection({
+  doc,
+  previewRef,
+  standalone,
+}: {
+  doc: ReturnType<typeof useAppStore.getState>["docs"][0] | null;
+  previewRef?: React.RefObject<HTMLDivElement | null>;
+  standalone?: boolean;
+}) {
   const viewMode = useAppStore((s) => s.viewMode);
   const maxLevel = useSettingsStore((s) => s.outlineMaxLevel);
 
@@ -60,7 +319,7 @@ export function OutlineSidebar({ previewRef, standalone = false }: Props) {
       id: h.id,
       level: h.level,
       text: h.text,
-      line: h.line, // 0 索引
+      line: h.line,
       kind: "heading",
     }));
   }, [doc?.headings]);
@@ -84,10 +343,7 @@ export function OutlineSidebar({ previewRef, standalone = false }: Props) {
       const item = rawItems[i];
       const next = rawItems[i + 1];
 
-      // 标题等级过滤（仅对 heading 生效）
       if (item.kind === "heading" && item.level > maxLevel) continue;
-
-      // 文本搜索过滤
       if (query && !item.text.toLowerCase().includes(query)) continue;
 
       if (skipLevel !== null) {
@@ -105,7 +361,7 @@ export function OutlineSidebar({ previewRef, standalone = false }: Props) {
     return rows;
   }, [rawItems, maxLevel, filterText, collapsed]);
 
-  /* ---------------- 滚动时高亮当前章节（Markdown 预览） ---------------- */
+  // 滚动时高亮当前章节（Markdown 预览）
   useEffect(() => {
     if (viewMode === "source" || effectiveMode !== "heading" || !previewRef?.current) return;
     const scroller = previewRef.current;
@@ -135,13 +391,12 @@ export function OutlineSidebar({ previewRef, standalone = false }: Props) {
     };
   }, [previewRef, headingItems, viewMode, effectiveMode]);
 
-  /* ---------------- 光标行所在项目高亮（源码模式） ---------------- */
+  // 光标行所在项目高亮（源码模式）
   const cursorLine = doc?.cursorLine ?? 1;
   useEffect(() => {
     if (rawItems.length === 0) return;
     let current: string | null = null;
     for (const item of rawItems) {
-      // heading 的 line 是 0 索引，symbol 的 line 是 1 索引
       const targetLine = item.kind === "heading" ? item.line + 1 : item.line;
       if (targetLine <= cursorLine) current = item.id;
       else break;
@@ -149,7 +404,6 @@ export function OutlineSidebar({ previewRef, standalone = false }: Props) {
     setActiveId(current ?? rawItems[0]?.id ?? null);
   }, [cursorLine, rawItems]);
 
-  // 自动滚动侧栏到当前高亮项
   useEffect(() => {
     if (!activeId || !listRef.current) return;
     const el = listRef.current.querySelector<HTMLElement>(`[data-id="${CSS.escape(activeId)}"]`);
@@ -163,7 +417,6 @@ export function OutlineSidebar({ previewRef, standalone = false }: Props) {
         previewRef.current.scrollTo({ top: el.offsetTop - 16, behavior: "smooth" });
       }
     } else {
-      // 统一跳转到编辑行
       const line0 = item.kind === "heading" ? item.line : item.line - 1;
       scrollToLine(Math.max(0, line0));
     }
@@ -188,7 +441,6 @@ export function OutlineSidebar({ previewRef, standalone = false }: Props) {
         </div>
 
         <div className="flex items-center gap-1">
-          {/* 模式切换：自动 / 标题 / 符号 */}
           <select
             value={mode}
             title="导航模式"

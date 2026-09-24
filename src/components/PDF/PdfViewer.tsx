@@ -1,13 +1,23 @@
-import { useEffect, useRef, useState, useCallback } from "react";
+import { useEffect, useRef, useState, useCallback, useMemo } from "react";
 import * as pdfjsLib from "pdfjs-dist";
 import pdfjsWorker from "pdfjs-dist/build/pdf.worker.min.js?url";
 import "pdfjs-dist/web/pdf_viewer.css";
-import { PDFDocument, degrees } from "pdf-lib";
 import { Icon } from "../common/Icon";
+import { ContextMenu, type ContextMenuItem } from "../common/ContextMenu";
 import { useAppStore } from "../../stores/appStore";
-import { askConfirm, askPdfPassword, showMessage } from "../../stores/dialogStore";
+import { askPdfPassword } from "../../stores/dialogStore";
 import { fileName } from "../../utils/filePath";
-import { invoke } from "@tauri-apps/api/core";
+import {
+  base64ToBytes,
+  deletePdfPage,
+  extractPdfPage,
+  highlightPdfText,
+  registerPdfDocument,
+  rotateAllPdfPages,
+  rotatePdfPage,
+  unregisterPdfDocument,
+  type OutlineItem,
+} from "./pdfService";
 
 // 设置 PDF.js Worker 路径
 pdfjsLib.GlobalWorkerOptions.workerSrc = pdfjsWorker;
@@ -18,35 +28,18 @@ interface PdfViewerProps {
   isDark: boolean;
 }
 
-interface OutlineItem {
-  title: string;
-  dest: any;
-  items?: OutlineItem[];
-  pageIndex?: number;
-}
-
-/** Base64 与 Uint8Array 互转辅助函数 */
-function base64ToBytes(base64: string): Uint8Array {
-  const binary = atob(base64);
-  const len = binary.length;
-  const bytes = new Uint8Array(len);
-  for (let i = 0; i < len; i++) {
-    bytes[i] = binary.charCodeAt(i);
-  }
-  return bytes;
-}
-
-function bytesToBase64(bytes: Uint8Array): string {
-  const chunkSize = 0x8000;
-  let binary = "";
-  for (let i = 0; i < bytes.length; i += chunkSize) {
-    binary += String.fromCharCode(...bytes.subarray(i, i + chunkSize));
-  }
-  return btoa(binary);
+interface PdfSelectionMenuState {
+  x: number;
+  y: number;
+  selectedText: string;
+  pageNum: number;
+  clientRects: DOMRect[];
+  pageRect: DOMRect | null;
 }
 
 export function PdfViewer({ docId, isDark }: PdfViewerProps) {
   const doc = useAppStore((s) => s.docs.find((d) => d.id === docId) ?? null);
+  const outlineVisible = useAppStore((s) => s.outlineVisible);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [pdfProxy, setPdfProxy] = useState<pdfjsLib.PDFDocumentProxy | null>(null);
@@ -54,11 +47,8 @@ export function PdfViewer({ docId, isDark }: PdfViewerProps) {
   const [currentPage, setCurrentPage] = useState(1);
   const [scale, setScale] = useState<number>(1.2);
   const [fitMode, setFitMode] = useState<"custom" | "width" | "page">("width");
-  const [sidebarOpen, setSidebarOpen] = useState(false);
-  const [sidebarTab, setSidebarTab] = useState<"thumbnails" | "outline">("thumbnails");
-  const [outline, setOutline] = useState<OutlineItem[]>([]);
   const [invertColors, setInvertColors] = useState(false);
-  const [draggedPageIndex, setDraggedPageIndex] = useState<number | null>(null);
+  const [contextMenu, setContextMenu] = useState<PdfSelectionMenuState | null>(null);
 
   const containerRef = useRef<HTMLDivElement>(null);
   const pageRefs = useRef<Map<number, HTMLDivElement>>(new Map());
@@ -104,11 +94,10 @@ export function PdfViewer({ docId, isDark }: PdfViewerProps) {
         });
 
         // 提取大纲书签
+        let parsedOutline: OutlineItem[] = [];
         try {
           const rawOutline = await proxy.getOutline();
           if (rawOutline && rawOutline.length > 0) {
-            // 解析大纲目标页码
-            const parsedOutline: OutlineItem[] = [];
             for (const item of rawOutline) {
               let pageIdx: number | undefined;
               if (item.dest) {
@@ -130,14 +119,13 @@ export function PdfViewer({ docId, isDark }: PdfViewerProps) {
                 pageIndex: pageIdx,
               });
             }
-            setOutline(parsedOutline);
-          } else {
-            setOutline([]);
           }
         } catch {
-          setOutline([]);
+          parsedOutline = [];
         }
 
+        // 注册到全局共享服务（供给左侧侧边栏大纲与缩略图渲染）
+        registerPdfDocument(docId, proxy, parsedOutline);
         setLoading(false);
       } catch (err: any) {
         console.error("加载 PDF 失败", err);
@@ -154,7 +142,10 @@ export function PdfViewer({ docId, isDark }: PdfViewerProps) {
 
   useEffect(() => {
     void loadPdf();
-  }, [loadPdf]);
+    return () => {
+      unregisterPdfDocument(docId);
+    };
+  }, [loadPdf, docId]);
 
   // 适应页面宽度计算
   const updateFitWidth = useCallback(async () => {
@@ -162,9 +153,9 @@ export function PdfViewer({ docId, isDark }: PdfViewerProps) {
     try {
       const page = await pdfProxy.getPage(currentPage);
       const viewport = page.getViewport({ scale: 1.0 });
-      const containerWidth = containerRef.current.clientWidth - (sidebarOpen ? 240 : 0) - 64;
+      const containerWidth = containerRef.current.clientWidth - 48;
       if (containerWidth > 0 && viewport.width > 0) {
-        const newScale = Math.max(0.4, Math.min(3.0, containerWidth / viewport.width));
+        const newScale = Math.max(0.3, Math.min(3.5, containerWidth / viewport.width));
         setScale(newScale);
         setFitMode("width");
         useAppStore.getState().patchDoc(docId, { pdfScale: "width" });
@@ -172,7 +163,7 @@ export function PdfViewer({ docId, isDark }: PdfViewerProps) {
     } catch {
       /* ignore */
     }
-  }, [pdfProxy, currentPage, sidebarOpen, docId]);
+  }, [pdfProxy, currentPage, docId]);
 
   // 适应整页高度计算
   const updateFitPage = useCallback(async () => {
@@ -180,9 +171,9 @@ export function PdfViewer({ docId, isDark }: PdfViewerProps) {
     try {
       const page = await pdfProxy.getPage(currentPage);
       const viewport = page.getViewport({ scale: 1.0 });
-      const containerHeight = containerRef.current.clientHeight - 64;
+      const containerHeight = containerRef.current.clientHeight - 48;
       if (containerHeight > 0 && viewport.height > 0) {
-        const newScale = Math.max(0.4, Math.min(3.0, containerHeight / viewport.height));
+        const newScale = Math.max(0.3, Math.min(3.5, containerHeight / viewport.height));
         setScale(newScale);
         setFitMode("page");
         useAppStore.getState().patchDoc(docId, { pdfScale: "page" });
@@ -198,7 +189,7 @@ export function PdfViewer({ docId, isDark }: PdfViewerProps) {
     } else if (fitMode === "page") {
       void updateFitPage();
     }
-  }, [fitMode, sidebarOpen]);
+  }, [fitMode]);
 
   // 视口滚动监听以追踪当前页码
   const handleScroll = () => {
@@ -223,171 +214,185 @@ export function PdfViewer({ docId, isDark }: PdfViewerProps) {
   };
 
   // 跳转到指定页面
-  const scrollToPage = (pageNum: number) => {
-    const safePage = Math.max(1, Math.min(numPages, pageNum));
-    const targetEl = pageRefs.current.get(safePage);
-    if (targetEl) {
-      targetEl.scrollIntoView({ behavior: "smooth", block: "start" });
-      setCurrentPage(safePage);
-      useAppStore.getState().patchDoc(docId, { pdfCurrentPage: safePage });
-    }
-  };
-
-  /* ---------------------- PDF 编辑操作 (使用 pdf-lib) ---------------------- */
-
-  // 旋转指定页面（顺时针 90 度）
-  const rotatePage = async (pageNum: number, clockwise = true) => {
-    try {
-      const rawBytes = base64ToBytes(pdfBase64);
-      const pdfDoc = await PDFDocument.load(rawBytes, { ignoreEncryption: true });
-      const page = pdfDoc.getPage(pageNum - 1);
-      const current = page.getRotation().angle;
-      const nextAngle = (current + (clockwise ? 90 : 270)) % 360;
-      page.setRotation(degrees(nextAngle));
-
-      const newBytes = await pdfDoc.save();
-      const newBase64 = bytesToBase64(newBytes);
-      useAppStore.getState().patchDoc(docId, {
-        pdfBase64: newBase64,
-        isDirty: true,
-      });
-    } catch (err: any) {
-      await showMessage("旋转页面失败", String(err));
-    }
-  };
-
-  // 旋转全部页面
-  const rotateAllPages = async (clockwise = true) => {
-    try {
-      const rawBytes = base64ToBytes(pdfBase64);
-      const pdfDoc = await PDFDocument.load(rawBytes, { ignoreEncryption: true });
-      const pages = pdfDoc.getPages();
-      for (const page of pages) {
-        const current = page.getRotation().angle;
-        const nextAngle = (current + (clockwise ? 90 : 270)) % 360;
-        page.setRotation(degrees(nextAngle));
+  const scrollToPage = useCallback(
+    (pageNum: number) => {
+      const safePage = Math.max(1, Math.min(numPages, pageNum));
+      const targetEl = pageRefs.current.get(safePage);
+      if (targetEl) {
+        targetEl.scrollIntoView({ behavior: "smooth", block: "start" });
+        setCurrentPage(safePage);
+        useAppStore.getState().patchDoc(docId, { pdfCurrentPage: safePage });
       }
+    },
+    [numPages, docId],
+  );
 
-      const newBytes = await pdfDoc.save();
-      const newBase64 = bytesToBase64(newBytes);
-      useAppStore.getState().patchDoc(docId, {
-        pdfBase64: newBase64,
-        isDirty: true,
+  // 监听来自全局侧边栏的跳转事件
+  useEffect(() => {
+    const handler = (e: any) => {
+      if (e.detail?.docId === docId && typeof e.detail?.pageNum === "number") {
+        scrollToPage(e.detail.pageNum);
+      }
+    };
+    window.addEventListener("pdf-jump-to-page" as any, handler);
+    return () => window.removeEventListener("pdf-jump-to-page" as any, handler);
+  }, [docId, scrollToPage]);
+
+  // 支持 Ctrl + 滚轮平滑缩放
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
+
+    const handleWheel = (e: WheelEvent) => {
+      if (e.ctrlKey || e.metaKey) {
+        e.preventDefault();
+        const delta = e.deltaY < 0 ? 0.15 : -0.15;
+        setFitMode("custom");
+        setScale((prev) => Math.max(0.3, Math.min(4.0, Number((prev + delta).toFixed(2)))));
+      }
+    };
+
+    container.addEventListener("wheel", handleWheel, { passive: false });
+    return () => {
+      container.removeEventListener("wheel", handleWheel);
+    };
+  }, []);
+
+  // 右键划词选区与菜单处理
+  const handleContextMenu = (e: React.MouseEvent) => {
+    const selection = window.getSelection();
+    const text = selection?.toString()?.trim() || "";
+    const range = selection && selection.rangeCount > 0 ? selection.getRangeAt(0) : null;
+
+    // 查找右键点击发生在哪一页
+    let targetPage = currentPage;
+    let pageEl: HTMLElement | null = null;
+    let cur: HTMLElement | null = e.target as HTMLElement;
+
+    while (cur && cur !== containerRef.current) {
+      if (cur.dataset?.pageNumber) {
+        targetPage = parseInt(cur.dataset.pageNumber, 10);
+        pageEl = cur;
+        break;
+      }
+      cur = cur.parentElement;
+    }
+
+    const clientRects = range ? Array.from(range.getClientRects()) : [];
+    const pageRect = pageEl ? pageEl.getBoundingClientRect() : null;
+
+    if (text || clientRects.length > 0) {
+      e.preventDefault();
+      setContextMenu({
+        x: e.clientX,
+        y: e.clientY,
+        selectedText: text,
+        pageNum: targetPage,
+        clientRects,
+        pageRect,
       });
-    } catch (err: any) {
-      await showMessage("旋转全部页面失败", String(err));
     }
   };
 
-  // 删除指定页面
-  const deletePage = async (pageNum: number) => {
-    if (numPages <= 1) {
-      await showMessage("无法删除", "文档仅剩 1 页，无法继续删除。");
-      return;
-    }
-    const ok = await askConfirm({
-      title: "删除页面",
-      message: `确定要删除第 ${pageNum} 页吗？删除后可使用 Ctrl+S 保存。`,
-      confirmText: "删除",
-      danger: true,
-    });
-    if (!ok) return;
-
-    try {
-      const rawBytes = base64ToBytes(pdfBase64);
-      const pdfDoc = await PDFDocument.load(rawBytes, { ignoreEncryption: true });
-      pdfDoc.removePage(pageNum - 1);
-
-      const newBytes = await pdfDoc.save();
-      const newBase64 = bytesToBase64(newBytes);
-      useAppStore.getState().patchDoc(docId, {
-        pdfBase64: newBase64,
-        isDirty: true,
-        pdfTotalPages: numPages - 1,
-        pdfCurrentPage: Math.min(currentPage, numPages - 1),
-      });
-    } catch (err: any) {
-      await showMessage("删除页面失败", String(err));
-    }
-  };
-
-  // 提取当前页并另存为独立 PDF
-  const extractPage = async (pageNum: number) => {
-    try {
-      const rawBytes = base64ToBytes(pdfBase64);
-      const srcDoc = await PDFDocument.load(rawBytes, { ignoreEncryption: true });
-      const newPdf = await PDFDocument.create();
-      const [copiedPage] = await newPdf.copyPages(srcDoc, [pageNum - 1]);
-      newPdf.addPage(copiedPage);
-      const newBytes = await newPdf.save();
-      const newBase64 = bytesToBase64(newBytes);
-
-      const defaultName = `${docName.replace(/\.pdf$/i, "")}_第${pageNum}页.pdf`;
-      const targetPath = await invoke<string | null>("save_file_dialog", {
-        defaultPath: defaultName,
-        filterPdf: true,
-      });
-      if (!targetPath) return;
-
-      await invoke("write_binary_file", {
-        path: targetPath,
-        base64: newBase64,
-        encryptedHeader: null,
-      });
-      await showMessage("提取成功", `已成功将第 ${pageNum} 页保存到：\n${targetPath}`);
-    } catch (err: any) {
-      await showMessage("提取页面失败", String(err));
-    }
-  };
-
-  // 页面拖拽调序完成
-  const handleDropPage = async (targetIndex: number) => {
-    if (draggedPageIndex === null || draggedPageIndex === targetIndex) return;
-    try {
-      const rawBytes = base64ToBytes(pdfBase64);
-      const srcDoc = await PDFDocument.load(rawBytes, { ignoreEncryption: true });
-      const newDoc = await PDFDocument.create();
-
-      // 构建新排序下标列表
-      const order = Array.from({ length: numPages }, (_, i) => i);
-      const [moved] = order.splice(draggedPageIndex, 1);
-      order.splice(targetIndex, 0, moved);
-
-      const copiedPages = await newDoc.copyPages(srcDoc, order);
-      copiedPages.forEach((p) => newDoc.addPage(p));
-
-      const newBytes = await newDoc.save();
-      const newBase64 = bytesToBase64(newBytes);
-      setDraggedPageIndex(null);
-      useAppStore.getState().patchDoc(docId, {
-        pdfBase64: newBase64,
-        isDirty: true,
-      });
-    } catch (err: any) {
-      setDraggedPageIndex(null);
-      await showMessage("重排页面失败", String(err));
-    }
-  };
+  const contextMenuGroups = useMemo<ContextMenuItem[][]>(() => {
+    if (!contextMenu) return [];
+    return [
+      [
+        {
+          label: "复制文本",
+          hint: "Ctrl+C",
+          icon: "copy",
+          onClick: async () => {
+            if (contextMenu.selectedText) {
+              await navigator.clipboard.writeText(contextMenu.selectedText);
+            }
+            setContextMenu(null);
+          },
+        },
+      ],
+      [
+        {
+          label: "高亮标记 (黄色)",
+          icon: "bold",
+          onClick: async () => {
+            if (contextMenu.pageRect && contextMenu.clientRects.length > 0) {
+              await highlightPdfText(
+                docId,
+                contextMenu.pageNum,
+                contextMenu.clientRects,
+                contextMenu.pageRect,
+                "yellow",
+              );
+              window.getSelection()?.removeAllRanges();
+            }
+            setContextMenu(null);
+          },
+        },
+        {
+          label: "高亮标记 (绿色)",
+          onClick: async () => {
+            if (contextMenu.pageRect && contextMenu.clientRects.length > 0) {
+              await highlightPdfText(
+                docId,
+                contextMenu.pageNum,
+                contextMenu.clientRects,
+                contextMenu.pageRect,
+                "green",
+              );
+              window.getSelection()?.removeAllRanges();
+            }
+            setContextMenu(null);
+          },
+        },
+        {
+          label: "高亮标记 (粉色)",
+          onClick: async () => {
+            if (contextMenu.pageRect && contextMenu.clientRects.length > 0) {
+              await highlightPdfText(
+                docId,
+                contextMenu.pageNum,
+                contextMenu.clientRects,
+                contextMenu.pageRect,
+                "pink",
+              );
+              window.getSelection()?.removeAllRanges();
+            }
+            setContextMenu(null);
+          },
+        },
+      ],
+      [
+        {
+          label: "取消选区",
+          icon: "x",
+          onClick: () => {
+            window.getSelection()?.removeAllRanges();
+            setContextMenu(null);
+          },
+        },
+      ],
+    ];
+  }, [contextMenu, docId]);
 
   return (
     <div className="relative flex h-full w-full flex-col overflow-hidden bg-panel">
-      {/* PDF 顶置工具栏 */}
-      <div className="flex h-9 shrink-0 items-center justify-between border-b border-line bg-panel px-3 text-[12px] text-muted">
+      {/* PDF 顶置工具栏：防止挤压、加 shrink-0、窄屏隐藏文字只留精细图标 */}
+      <div className="flex h-9 shrink-0 items-center justify-between gap-1 border-b border-line bg-panel px-2 text-[12px] text-muted overflow-x-auto overflow-y-hidden scrollbar-none">
         {/* 左侧：侧栏切换 & 页码跳转 */}
-        <div className="flex items-center gap-1.5">
+        <div className="flex shrink-0 items-center gap-1">
           <button
             type="button"
-            title={sidebarOpen ? "收起缩略图与大纲" : "展开缩略图与大纲"}
-            onClick={() => setSidebarOpen(!sidebarOpen)}
-            className={`flex h-7 items-center gap-1 rounded px-2 transition-colors ${
-              sidebarOpen ? "bg-accent/15 text-accent font-medium" : "hover:bg-hover hover:text-fg"
+            title={outlineVisible ? "收起文档大纲与缩略图 (Ctrl+Shift+E)" : "展开文档大纲与缩略图 (Ctrl+Shift+E)"}
+            onClick={() => useAppStore.getState().setOutlineVisible(!outlineVisible)}
+            className={`flex h-7 shrink-0 whitespace-nowrap items-center gap-1 rounded px-2 transition-colors ${
+              outlineVisible ? "bg-accent/15 text-accent font-medium" : "hover:bg-hover hover:text-fg"
             }`}
           >
-            <Icon name="grid" size={14} />
-            <span className="hidden sm:inline">页面侧栏</span>
+            <Icon name="grid" size={14} className="shrink-0" />
+            <span className="hidden sm:inline whitespace-nowrap">侧栏</span>
           </button>
 
-          <div className="mx-1 h-4 w-px bg-line" />
+          <div className="mx-1 h-4 w-px shrink-0 bg-line" />
 
           {/* 页码选择器 */}
           <button
@@ -395,12 +400,12 @@ export function PdfViewer({ docId, isDark }: PdfViewerProps) {
             title="上一页 (Page Up)"
             disabled={currentPage <= 1}
             onClick={() => scrollToPage(currentPage - 1)}
-            className="flex h-7 w-7 items-center justify-center rounded hover:bg-hover hover:text-fg disabled:opacity-40"
+            className="flex h-7 w-7 shrink-0 items-center justify-center rounded hover:bg-hover hover:text-fg disabled:opacity-40"
           >
-            <Icon name="arrow-up" size={13} />
+            <Icon name="arrow-up" size={13} className="shrink-0" />
           </button>
 
-          <div className="flex items-center gap-1">
+          <div className="flex shrink-0 items-center gap-1">
             <input
               type="text"
               value={currentPage}
@@ -408,9 +413,9 @@ export function PdfViewer({ docId, isDark }: PdfViewerProps) {
                 const val = parseInt(e.target.value, 10);
                 if (!isNaN(val)) scrollToPage(val);
               }}
-              className="h-6 w-11 rounded border border-line bg-app text-center text-[12px] text-fg outline-none focus:border-accent"
+              className="h-6 w-10 shrink-0 rounded border border-line bg-app text-center text-[12px] text-fg outline-none focus:border-accent"
             />
-            <span className="text-muted/70">/ {numPages || 1}</span>
+            <span className="shrink-0 whitespace-nowrap text-muted/70 text-[11px]">/ {numPages || 1}</span>
           </div>
 
           <button
@@ -418,28 +423,28 @@ export function PdfViewer({ docId, isDark }: PdfViewerProps) {
             title="下一页 (Page Down)"
             disabled={currentPage >= numPages}
             onClick={() => scrollToPage(currentPage + 1)}
-            className="flex h-7 w-7 items-center justify-center rounded hover:bg-hover hover:text-fg disabled:opacity-40"
+            className="flex h-7 w-7 shrink-0 items-center justify-center rounded hover:bg-hover hover:text-fg disabled:opacity-40"
           >
-            <Icon name="arrow-down" size={13} />
+            <Icon name="arrow-down" size={13} className="shrink-0" />
           </button>
         </div>
 
         {/* 中间：缩放控制 */}
-        <div className="flex items-center gap-1">
+        <div className="flex shrink-0 items-center gap-1">
           <button
             type="button"
-            title="缩小 (Ctrl+-)"
+            title="缩小 (Ctrl+- 或 Ctrl+滚轮)"
             onClick={() => {
               setFitMode("custom");
-              setScale((s) => Math.max(0.4, Number((s - 0.15).toFixed(2))));
+              setScale((s) => Math.max(0.3, Number((s - 0.15).toFixed(2))));
             }}
-            className="flex h-7 w-7 items-center justify-center rounded hover:bg-hover hover:text-fg"
+            className="flex h-7 w-7 shrink-0 items-center justify-center rounded hover:bg-hover hover:text-fg"
           >
-            <Icon name="zoom-out" size={14} />
+            <Icon name="zoom-out" size={14} className="shrink-0" />
           </button>
 
           <span
-            className="min-w-[46px] text-center font-mono text-[11.5px] text-fg/85 cursor-pointer hover:text-accent"
+            className="min-w-[42px] shrink-0 text-center font-mono text-[11.5px] text-fg/85 cursor-pointer hover:text-accent whitespace-nowrap"
             title="点击重置为 100%"
             onClick={() => {
               setFitMode("custom");
@@ -451,17 +456,17 @@ export function PdfViewer({ docId, isDark }: PdfViewerProps) {
 
           <button
             type="button"
-            title="放大 (Ctrl+=)"
+            title="放大 (Ctrl+= 或 Ctrl+滚轮)"
             onClick={() => {
               setFitMode("custom");
-              setScale((s) => Math.min(3.5, Number((s + 0.15).toFixed(2))));
+              setScale((s) => Math.min(4.0, Number((s + 0.15).toFixed(2))));
             }}
-            className="flex h-7 w-7 items-center justify-center rounded hover:bg-hover hover:text-fg"
+            className="flex h-7 w-7 shrink-0 items-center justify-center rounded hover:bg-hover hover:text-fg"
           >
-            <Icon name="zoom-in" size={14} />
+            <Icon name="zoom-in" size={14} className="shrink-0" />
           </button>
 
-          <div className="mx-1 h-4 w-px bg-line" />
+          <div className="mx-1 h-4 w-px shrink-0 bg-line" />
 
           <button
             type="button"
@@ -470,7 +475,7 @@ export function PdfViewer({ docId, isDark }: PdfViewerProps) {
               setFitMode("width");
               void updateFitWidth();
             }}
-            className={`flex h-7 items-center rounded px-2 text-[11.5px] transition-colors ${
+            className={`flex h-7 shrink-0 whitespace-nowrap items-center rounded px-1.5 text-[11.5px] transition-colors ${
               fitMode === "width" ? "bg-accent/15 text-accent font-medium" : "hover:bg-hover hover:text-fg"
             }`}
           >
@@ -484,7 +489,7 @@ export function PdfViewer({ docId, isDark }: PdfViewerProps) {
               setFitMode("page");
               void updateFitPage();
             }}
-            className={`flex h-7 items-center rounded px-2 text-[11.5px] transition-colors ${
+            className={`flex h-7 shrink-0 whitespace-nowrap items-center rounded px-1.5 text-[11.5px] transition-colors ${
               fitMode === "page" ? "bg-accent/15 text-accent font-medium" : "hover:bg-hover hover:text-fg"
             }`}
           >
@@ -493,233 +498,130 @@ export function PdfViewer({ docId, isDark }: PdfViewerProps) {
         </div>
 
         {/* 右侧：编辑与夜间模式 */}
-        <div className="flex items-center gap-1">
+        <div className="flex shrink-0 items-center gap-0.5 sm:gap-1">
           <button
             type="button"
             title="顺时针旋转当前页 90°"
-            onClick={() => rotatePage(currentPage, true)}
-            className="flex h-7 items-center gap-1 rounded px-2 hover:bg-hover hover:text-fg"
+            onClick={() => rotatePdfPage(docId, currentPage, true)}
+            className="flex h-7 shrink-0 whitespace-nowrap items-center gap-1 rounded px-1.5 hover:bg-hover hover:text-fg"
           >
-            <Icon name="rotate-cw" size={13} />
-            <span className="hidden md:inline">旋转当前页</span>
+            <Icon name="rotate-cw" size={13} className="shrink-0" />
+            <span className="hidden xl:inline whitespace-nowrap">旋转当前页</span>
           </button>
 
           <button
             type="button"
             title="顺时针旋转全部页面 90°"
-            onClick={() => rotateAllPages(true)}
-            className="flex h-7 items-center gap-1 rounded px-2 hover:bg-hover hover:text-fg"
+            onClick={() => rotateAllPdfPages(docId, true)}
+            className="flex h-7 shrink-0 whitespace-nowrap items-center gap-1 rounded px-1.5 hover:bg-hover hover:text-fg"
           >
-            <Icon name="rotate-cw" size={13} />
-            <span className="hidden lg:inline">旋转全部</span>
+            <Icon name="rotate-cw" size={13} className="shrink-0" />
+            <span className="hidden 2xl:inline whitespace-nowrap">旋转全部</span>
           </button>
 
           <button
             type="button"
             title="删除当前页"
-            onClick={() => deletePage(currentPage)}
-            className="flex h-7 items-center gap-1 rounded px-2 text-danger/80 hover:bg-danger/10 hover:text-danger"
+            onClick={() => deletePdfPage(docId, currentPage)}
+            className="flex h-7 shrink-0 whitespace-nowrap items-center gap-1 rounded px-1.5 text-danger/80 hover:bg-danger/10 hover:text-danger"
           >
-            <Icon name="trash" size={13} />
-            <span className="hidden md:inline">删除此页</span>
+            <Icon name="trash" size={13} className="shrink-0" />
+            <span className="hidden xl:inline whitespace-nowrap">删除此页</span>
           </button>
 
           <button
             type="button"
             title="将当前页另存为单独的 PDF"
-            onClick={() => extractPage(currentPage)}
-            className="flex h-7 items-center gap-1 rounded px-2 hover:bg-hover hover:text-fg"
+            onClick={() => extractPdfPage(docId, currentPage)}
+            className="flex h-7 shrink-0 whitespace-nowrap items-center gap-1 rounded px-1.5 hover:bg-hover hover:text-fg"
           >
-            <Icon name="download" size={13} />
-            <span className="hidden lg:inline">另存此页</span>
+            <Icon name="download" size={13} className="shrink-0" />
+            <span className="hidden 2xl:inline whitespace-nowrap">另存此页</span>
           </button>
 
-          <div className="mx-1 h-4 w-px bg-line" />
+          <div className="mx-1 h-4 w-px shrink-0 bg-line" />
 
           {/* 夜间反色阅读模式 */}
           <button
             type="button"
             title={invertColors ? "关闭深色阅读模式" : "开启深色阅读滤镜（夜间舒适护眼）"}
             onClick={() => setInvertColors(!invertColors)}
-            className={`flex h-7 w-7 items-center justify-center rounded transition-colors ${
+            className={`flex h-7 w-7 shrink-0 items-center justify-center rounded transition-colors ${
               invertColors ? "bg-accent text-accent-contrast" : "hover:bg-hover hover:text-fg"
             }`}
           >
-            <Icon name={invertColors ? "sun" : "moon"} size={14} />
+            <Icon name={invertColors ? "sun" : "moon"} size={14} className="shrink-0" />
           </button>
         </div>
       </div>
 
-      {/* 主视口区域：侧边栏 + 画布流 */}
-      <div className="relative flex flex-1 min-h-0 w-full overflow-hidden bg-app">
-        {/* 左侧可折叠抽屉：缩略图 / 大纲目录 */}
-        {sidebarOpen ? (
-          <aside className="relative flex w-60 shrink-0 flex-col border-r border-line bg-sidebar">
-            {/* 侧栏选项卡 */}
-            <div className="flex h-8 items-center border-b border-line px-2 text-[12px]">
-              <button
-                type="button"
-                onClick={() => setSidebarTab("thumbnails")}
-                className={`flex flex-1 items-center justify-center gap-1 rounded py-1 transition-colors ${
-                  sidebarTab === "thumbnails" ? "bg-panel font-medium text-accent" : "text-muted hover:text-fg"
-                }`}
-              >
-                <Icon name="grid" size={13} />
-                <span>缩略图 ({numPages})</span>
-              </button>
-              <button
-                type="button"
-                onClick={() => setSidebarTab("outline")}
-                className={`flex flex-1 items-center justify-center gap-1 rounded py-1 transition-colors ${
-                  sidebarTab === "outline" ? "bg-panel font-medium text-accent" : "text-muted hover:text-fg"
-                }`}
-              >
-                <Icon name="book-open" size={13} />
-                <span>大纲目录</span>
-              </button>
-            </div>
-
-            {/* 侧栏内容区 */}
-            <div className="flex-1 overflow-y-auto p-2 scrollbar-thin">
-              {sidebarTab === "thumbnails" ? (
-                <div className="flex flex-col gap-3">
-                  {Array.from({ length: numPages }, (_, i) => i + 1).map((pNum) => (
-                    <div
-                      key={pNum}
-                      draggable
-                      onDragStart={() => setDraggedPageIndex(pNum - 1)}
-                      onDragOver={(e) => e.preventDefault()}
-                      onDrop={() => handleDropPage(pNum - 1)}
-                      onClick={() => scrollToPage(pNum)}
-                      className={`group relative flex cursor-pointer flex-col items-center rounded-lg border p-1.5 transition-all ${
-                        currentPage === pNum
-                          ? "border-accent bg-accent/10 shadow-sm"
-                          : "border-line bg-panel hover:border-line-strong hover:bg-hover"
-                      }`}
-                    >
-                      {/* 缩略图画布渲染容器 */}
-                      <PdfThumbnail
-                        pdfProxy={pdfProxy}
-                        pageNum={pNum}
-                        active={currentPage === pNum}
-                      />
-
-                      {/* 页码与操作按钮 */}
-                      <div className="mt-1 flex w-full items-center justify-between px-1 text-[11px] text-muted">
-                        <span className="font-mono">{pNum}</span>
-                        <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
-                          <button
-                            type="button"
-                            title="旋转此页"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              rotatePage(pNum, true);
-                            }}
-                            className="rounded p-0.5 hover:bg-accent/20 hover:text-accent"
-                          >
-                            <Icon name="rotate-cw" size={11} />
-                          </button>
-                          <button
-                            type="button"
-                            title="删除此页"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              deletePage(pNum);
-                            }}
-                            className="rounded p-0.5 hover:bg-danger/20 hover:text-danger"
-                          >
-                            <Icon name="trash" size={11} />
-                          </button>
-                        </div>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              ) : (
-                <div className="text-[12px] text-fg/80">
-                  {outline.length === 0 ? (
-                    <div className="py-8 text-center text-muted">此文档未包含书签大纲</div>
-                  ) : (
-                    <div className="flex flex-col gap-1">
-                      {outline.map((item, idx) => (
-                        <div
-                          key={idx}
-                          onClick={() => {
-                            if (item.pageIndex) scrollToPage(item.pageIndex);
-                          }}
-                          className="flex cursor-pointer items-center justify-between rounded px-2 py-1.5 hover:bg-hover hover:text-accent"
-                        >
-                          <span className="truncate">{item.title}</span>
-                          {item.pageIndex ? (
-                            <span className="font-mono text-[11px] text-muted">{item.pageIndex}</span>
-                          ) : null}
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              )}
-            </div>
-          </aside>
-        ) : null}
-
-        {/* 主页面渲染流容器 */}
-        <div
-          ref={containerRef}
-          onScroll={handleScroll}
-          className={`flex flex-1 flex-col items-center overflow-y-auto overflow-x-auto p-6 scrollbar-thin ${
-            isDark ? "bg-[#18181b]" : "bg-neutral-100"
-          }`}
-        >
-          {loading ? (
-            <div className="flex h-full flex-col items-center justify-center gap-3 text-muted">
-              <Icon name="loader" size={28} className="animate-spin text-accent" />
-              <div className="text-[13px]">正在加载并解析 PDF 文档…</div>
-            </div>
-          ) : error ? (
-            <div className="flex h-full flex-col items-center justify-center gap-3 text-center text-muted">
-              <Icon name="lock" size={32} className="text-warning/80" />
-              <div className="text-[14px] font-medium text-fg">{error}</div>
-              <button
-                type="button"
-                onClick={() => void loadPdf()}
-                className="mt-2 rounded-md bg-accent px-4 py-1.5 text-[12px] text-accent-contrast shadow transition-colors hover:brightness-105"
-              >
-                输入密码解锁
-              </button>
-            </div>
-          ) : (
-            <div
-              className={`flex flex-col items-center gap-6 transition-all ${
-                invertColors ? "invert contrast-[0.9] hue-rotate-180" : ""
-              }`}
+      {/* 主视口区域：页面画布渲染流 */}
+      <div
+        ref={containerRef}
+        onScroll={handleScroll}
+        onContextMenu={handleContextMenu}
+        className={`flex flex-1 flex-col items-center overflow-y-auto overflow-x-auto p-6 scrollbar-thin ${
+          isDark ? "bg-[#18181b]" : "bg-neutral-100"
+        }`}
+      >
+        {loading ? (
+          <div className="flex h-full flex-col items-center justify-center gap-3 text-muted">
+            <Icon name="loader" size={28} className="animate-spin text-accent" />
+            <div className="text-[13px]">正在加载并解析 PDF 文档…</div>
+          </div>
+        ) : error ? (
+          <div className="flex h-full flex-col items-center justify-center gap-3 text-center text-muted">
+            <Icon name="lock" size={32} className="text-warning/80" />
+            <div className="text-[14px] font-medium text-fg">{error}</div>
+            <button
+              type="button"
+              onClick={() => void loadPdf()}
+              className="mt-2 rounded-md bg-accent px-4 py-1.5 text-[12px] text-accent-contrast shadow transition-colors hover:brightness-105"
             >
-              {Array.from({ length: numPages }, (_, i) => i + 1).map((pNum) => (
-                <div
-                  key={pNum}
-                  ref={(el) => {
-                    if (el) pageRefs.current.set(pNum, el);
-                    else pageRefs.current.delete(pNum);
-                  }}
-                  data-page-number={pNum}
-                  className="relative rounded shadow-lg bg-white overflow-hidden transition-shadow"
-                >
-                  <PdfPage
-                    pdfProxy={pdfProxy}
-                    pageNum={pNum}
-                    scale={scale}
-                  />
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
+              输入密码解锁
+            </button>
+          </div>
+        ) : (
+          <div
+            className={`flex flex-col items-center gap-6 transition-all ${
+              invertColors ? "invert contrast-[0.9] hue-rotate-180" : ""
+            }`}
+          >
+            {Array.from({ length: numPages }, (_, i) => i + 1).map((pNum) => (
+              <div
+                key={pNum}
+                ref={(el) => {
+                  if (el) pageRefs.current.set(pNum, el);
+                  else pageRefs.current.delete(pNum);
+                }}
+                data-page-number={pNum}
+                className="relative rounded shadow-lg bg-white overflow-hidden transition-shadow"
+              >
+                <PdfPage
+                  pdfProxy={pdfProxy}
+                  pageNum={pNum}
+                  scale={scale}
+                />
+              </div>
+            ))}
+          </div>
+        )}
       </div>
+
+      {/* 右键划词选区处理菜单 */}
+      {contextMenu ? (
+        <ContextMenu
+          x={contextMenu.x}
+          y={contextMenu.y}
+          groups={contextMenuGroups}
+          onClose={() => setContextMenu(null)}
+        />
+      ) : null}
     </div>
   );
 }
 
-/** 单页 Canvas + TextLayer 渲染组件 */
+/** 单页 Canvas + TextLayer 渲染组件（带精确 --scale-factor 缩放绑定） */
 function PdfPage({
   pdfProxy,
   pageNum,
@@ -767,9 +669,12 @@ function PdfPage({
         await renderTask.promise;
         if (cancel) return;
 
-        // 渲染透明文本选择层（支持划词/选择/复制）
+        // 渲染透明文本选择层（解决高亮文字选区高度不跟随问题）
         if (textLayerRef.current) {
           textLayerRef.current.innerHTML = "";
+          // 关键修复：必须设置 --scale-factor CSS 变量，确保 pdfjs 计算的文本选区与缩放字体高度严格匹配
+          textLayerRef.current.style.setProperty("--scale-factor", String(cssViewport.scale));
+
           const textContent = await page.getTextContent();
           if (cancel) return;
 
@@ -806,76 +711,14 @@ function PdfPage({
       <canvas ref={canvasRef} className="block select-none" />
       <div
         ref={textLayerRef}
-        className="textLayer absolute inset-0 select-text"
+        className="textLayer absolute inset-0 select-text leading-none"
         style={{
           width: dimensions ? `${dimensions.width}px` : "auto",
           height: dimensions ? `${dimensions.height}px` : "auto",
+          // @ts-ignore
+          "--scale-factor": String(scale),
         }}
       />
-    </div>
-  );
-}
-
-/** 缩略图迷你渲染组件 */
-function PdfThumbnail({
-  pdfProxy,
-  pageNum,
-  active,
-}: {
-  pdfProxy: pdfjsLib.PDFDocumentProxy | null;
-  pageNum: number;
-  active: boolean;
-}) {
-  const canvasRef = useRef<HTMLCanvasElement>(null);
-
-  useEffect(() => {
-    if (!pdfProxy) return;
-    let cancel = false;
-    let renderTask: any = null;
-
-    const render = async () => {
-      try {
-        const page = await pdfProxy.getPage(pageNum);
-        if (cancel) return;
-
-        const viewport = page.getViewport({ scale: 1.0 });
-        const targetWidth = 140;
-        const thumbScale = targetWidth / viewport.width;
-        const thumbViewport = page.getViewport({ scale: thumbScale });
-
-        const canvas = canvasRef.current;
-        if (!canvas) return;
-        const context = canvas.getContext("2d", { alpha: false });
-        if (!context) return;
-
-        canvas.width = thumbViewport.width;
-        canvas.height = thumbViewport.height;
-
-        renderTask = page.render({
-          canvasContext: context,
-          viewport: thumbViewport,
-        });
-        await renderTask.promise;
-      } catch {
-        /* ignore */
-      }
-    };
-
-    void render();
-
-    return () => {
-      cancel = true;
-      if (renderTask) renderTask.cancel();
-    };
-  }, [pdfProxy, pageNum]);
-
-  return (
-    <div
-      className={`relative flex items-center justify-center overflow-hidden rounded bg-white shadow-xs ${
-        active ? "ring-2 ring-accent" : ""
-      }`}
-    >
-      <canvas ref={canvasRef} className="block" />
     </div>
   );
 }

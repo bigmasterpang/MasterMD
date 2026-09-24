@@ -41,12 +41,12 @@ export const OPENABLE_EXTENSIONS = [
   ...CODE_EXTENSIONS,
 ];
 
-/** 打开对话框过滤器 */
+/** 打开对话框过滤器（默认显示所有文件） */
 export const OPEN_DIALOG_FILTERS = [
+  { name: "所有文件", extensions: ["*"] },
   { name: "Markdown 文件", extensions: MARKDOWN_EXTENSIONS },
   { name: "PDF 文件", extensions: PDF_EXTENSIONS },
   { name: "文本与代码文件", extensions: [...TEXT_EXTENSIONS, ...CODE_EXTENSIONS] },
-  { name: "所有文件", extensions: ["*"] },
 ];
 
 /** 支持的文件编码（与 Rust 端保持一致） */

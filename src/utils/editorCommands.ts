@@ -746,6 +746,16 @@ export async function pasteFromClipboard(): Promise<boolean> {
   }
 }
 
+/** 全选编辑器文本 */
+export function selectAllText(): void {
+  withEditorView((view) => {
+    view.dispatch({
+      selection: { anchor: 0, head: view.state.doc.length },
+    });
+    view.focus();
+  });
+}
+
 /** 清除选区内的内联标记（粗体 / 斜体 / 删除线 / 行内代码 / 上下标） */
 export function clearFormatting(): void {
   withEditorView((view) => {

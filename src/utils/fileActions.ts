@@ -165,7 +165,7 @@ export async function openFileDialog(): Promise<void> {
     const selected = await openDialog({
       multiple: false,
       directory: false,
-      title: "打开文档 (Markdown / PDF / 代码 / 文本)",
+      title: "打开文件",
       filters: OPEN_DIALOG_FILTERS,
     });
     if (typeof selected === "string") {
