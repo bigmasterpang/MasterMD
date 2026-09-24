@@ -4,7 +4,7 @@ import { openUrl } from "@tauri-apps/plugin-opener";
 import { createDoc, docFromPayload, getActiveDoc, getDocById, useAppStore } from "../stores/appStore";
 import { askConfirm, askUnsaved, showMessage } from "../stores/dialogStore";
 import type { BinaryPayload, FilePayload } from "../types";
-import { burnHighlightsToPdf } from "../components/PDF/pdfService";
+import { loadPdfAnnotations, savePdfAnnotations } from "./persist";
 import {
   EMPTY_DOC_PLACEHOLDER,
   LARGE_FILE_BYTES,
@@ -119,6 +119,7 @@ export async function openPath(path: string, targetPane?: 0 | 1): Promise<boolea
   try {
     if (isPdfPath(path)) {
       const payload = await invoke<BinaryPayload>("read_binary_file", { path });
+      const anno = await loadPdfAnnotations(path);
       const doc = createDoc({
         filePath: payload.path,
         docType: "pdf",
@@ -126,7 +127,10 @@ export async function openPath(path: string, targetPane?: 0 | 1): Promise<boolea
         pdfBase64: payload.dataBase64,
         savedPdfBase64: payload.dataBase64,
         cleanPdfBase64: payload.dataBase64,
-        pdfHighlights: [],
+        pdfHighlights: anno?.highlights ?? [],
+        pdfNotes: anno?.notes ?? [],
+        pdfPaperTheme: anno?.paperTheme ?? "white",
+        pdfCurrentPage: anno?.currentPage ?? 1,
         modifiedAt: payload.modifiedAt,
         size: payload.size,
         encrypted: payload.encrypted ?? false,
@@ -272,22 +276,39 @@ export async function saveDoc(id: string): Promise<boolean> {
     markSelfWrite();
     if (doc.docType === "pdf" || isPdfPath(doc.filePath)) {
       if (!doc.pdfBase64) return false;
-      let base64ToWrite = doc.cleanPdfBase64 || doc.pdfBase64;
-      if (doc.pdfHighlights && doc.pdfHighlights.length > 0) {
-        base64ToWrite = await burnHighlightsToPdf(base64ToWrite, doc.pdfHighlights);
-      }
-      const modifiedAt = await invoke<number>("write_binary_file", {
-        path: doc.filePath,
-        base64: base64ToWrite,
-        encryptedHeader: doc.encryptedHeader,
+      // 1. 将高亮标注与便签元数据保存到持久化存储（不修改 PDF 二进制）
+      await savePdfAnnotations(doc.filePath, {
+        highlights: doc.pdfHighlights ?? [],
+        notes: doc.pdfNotes ?? [],
+        paperTheme: doc.pdfPaperTheme,
+        currentPage: doc.pdfCurrentPage,
       });
+
+      // 2. 仅在页面结构发生实质修改时才重新写磁盘文件（例如旋转/删除/重排等导致 pdfBase64 变化）
+      const hasBinaryChange =
+        Boolean(doc.savedPdfBase64) &&
+        doc.pdfBase64 !== doc.savedPdfBase64;
+
+      let modifiedAt = doc.modifiedAt;
+      let newSize = doc.size;
+
+      if (hasBinaryChange) {
+        modifiedAt = await invoke<number>("write_binary_file", {
+          path: doc.filePath,
+          base64: doc.pdfBase64,
+          encryptedHeader: doc.encryptedHeader,
+        });
+        newSize = (doc.encrypted ? 4096 : 0) + Math.floor((doc.pdfBase64.length * 3) / 4);
+      }
+
       markSelfWrite();
       useAppStore.getState().patchDoc(id, {
-        pdfBase64: base64ToWrite,
-        savedPdfBase64: base64ToWrite,
+        // 关键：绝对不改动 pdfBase64，保持当前内存中二进制引用不变，避免触发 PdfViewer 重载！
+        savedPdfBase64: doc.pdfBase64,
+        cleanPdfBase64: doc.pdfBase64,
         isDirty: false,
         modifiedAt,
-        size: (doc.encrypted ? 4096 : 0) + Math.floor((base64ToWrite.length * 3) / 4),
+        size: newSize,
       });
       void addRecentFile(doc.filePath);
       return true;
@@ -333,26 +354,27 @@ export async function saveDocAs(id: string): Promise<boolean> {
 
     if (isPdf) {
       if (!doc.pdfBase64) return false;
-      let base64ToWrite = doc.cleanPdfBase64 || doc.pdfBase64;
-      if (doc.pdfHighlights && doc.pdfHighlights.length > 0) {
-        base64ToWrite = await burnHighlightsToPdf(base64ToWrite, doc.pdfHighlights);
-      }
       const modifiedAt = await invoke<number>("write_binary_file", {
         path: target,
-        base64: base64ToWrite,
+        base64: doc.pdfBase64,
         encryptedHeader: doc.encryptedHeader,
+      });
+      await savePdfAnnotations(target, {
+        highlights: doc.pdfHighlights ?? [],
+        notes: doc.pdfNotes ?? [],
+        paperTheme: doc.pdfPaperTheme,
+        currentPage: doc.pdfCurrentPage,
       });
       markSelfWrite();
       const oldPath = doc.filePath;
       useAppStore.getState().patchDoc(id, {
         filePath: target,
         docType: "pdf",
-        pdfBase64: base64ToWrite,
-        savedPdfBase64: base64ToWrite,
-        cleanPdfBase64: doc.cleanPdfBase64 || doc.pdfBase64,
+        savedPdfBase64: doc.pdfBase64,
+        cleanPdfBase64: doc.pdfBase64,
         isDirty: false,
         readOnly: false,
-        size: (doc.encrypted ? 4096 : 0) + Math.floor((base64ToWrite.length * 3) / 4),
+        size: (doc.encrypted ? 4096 : 0) + Math.floor((doc.pdfBase64.length * 3) / 4),
         modifiedAt,
       });
       if (oldPath && !samePath(oldPath, target)) void unwatchFile(oldPath);

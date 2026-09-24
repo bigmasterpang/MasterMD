@@ -3,7 +3,15 @@ import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow, LogicalSize } from "@tauri-apps/api/window";
 import { createDoc, docFromPayload, useAppStore } from "../stores/appStore";
 import { pickSettings, useSettingsStore } from "../stores/settingsStore";
-import type { FilePayload, Settings, ViewMode } from "../types";
+import type {
+  BinaryPayload,
+  FilePayload,
+  PdfHighlight,
+  PdfNote,
+  Settings,
+  ViewMode,
+} from "../types";
+import { isPdfPath, normalizeSlashes } from "./filePath";
 import { debounce } from "./timing";
 
 /** 是否运行在 Tauri 环境中（纯浏览器打开 vite 页面时跳过持久化） */
@@ -135,6 +143,51 @@ export async function flushUiState(): Promise<void> {
 }
 
 /* ------------------------------------------------------------------ */
+/* PDF 标注数据持久化：高亮、批注、便签、底色、阅读位置                */
+/* ------------------------------------------------------------------ */
+
+export interface StoredPdfAnnotations {
+  highlights: PdfHighlight[];
+  notes: PdfNote[];
+  paperTheme?: string;
+  currentPage?: number;
+}
+
+export async function loadPdfAnnotations(filePath: string): Promise<StoredPdfAnnotations | null> {
+  if (!isTauri) return null;
+  try {
+    if (!file) {
+      file = new LazyStore(STORE_FILE);
+      await file.init();
+    }
+    const key = `pdf_anno:${normalizeSlashes(filePath).toLowerCase()}`;
+    const data = await file.get<StoredPdfAnnotations>(key);
+    return data ?? null;
+  } catch (error) {
+    console.error("读取 PDF 标注失败", error);
+    return null;
+  }
+}
+
+export async function savePdfAnnotations(
+  filePath: string,
+  annotations: StoredPdfAnnotations,
+): Promise<void> {
+  if (!isTauri) return;
+  try {
+    if (!file) {
+      file = new LazyStore(STORE_FILE);
+      await file.init();
+    }
+    const key = `pdf_anno:${normalizeSlashes(filePath).toLowerCase()}`;
+    await file.set(key, annotations);
+    await file.save();
+  } catch (error) {
+    console.error("保存 PDF 标注失败", error);
+  }
+}
+
+/* ------------------------------------------------------------------ */
 /* 会话恢复：避免意外重载（如误按刷新）导致未保存内容丢失              */
 /* ------------------------------------------------------------------ */
 
@@ -163,6 +216,7 @@ async function writeSession(): Promise<void> {
         .slice(0, SESSION_TAB_LIMIT),
       unsaved: docs
         .filter((doc) => doc.isDirty || !doc.filePath)
+        .filter((doc) => doc.docType !== "pdf" && !isPdfPath(doc.filePath))
         .filter((doc) => doc.content.length <= SESSION_CONTENT_LIMIT)
         .slice(0, SESSION_TAB_LIMIT)
         .map((doc) => ({
@@ -190,9 +244,10 @@ export async function restoreSession(): Promise<void> {
         .filter((path): path is string => Boolean(path)),
     );
 
-    // 1. 未保存 / 未命名文档优先恢复
+    // 1. 未保存 / 未命名文档优先恢复（过滤掉 PDF）
     for (const entry of payload.unsaved ?? []) {
       if (!entry.content) continue;
+      if (entry.path && isPdfPath(entry.path)) continue;
       const doc = createDoc({
         filePath: entry.path,
         content: entry.content,
@@ -216,12 +271,37 @@ export async function restoreSession(): Promise<void> {
       state.addDoc(doc);
     }
 
-    // 2. 其余已保存标签页
+    // 2. 其余已保存标签页（支持恢复 PDF 及标注）
     for (const item of payload.paths ?? []) {
       const path = typeof item === "string" ? item : item.path;
       const pane = typeof item === "string" ? 0 : item.pane ?? 0;
       if (opened.has(path.toLowerCase())) continue;
       try {
+        if (isPdfPath(path)) {
+          const payloadData = await invoke<BinaryPayload>("read_binary_file", { path });
+          const anno = await loadPdfAnnotations(path);
+          const restoredDoc = createDoc({
+            filePath: payloadData.path,
+            docType: "pdf",
+            pane,
+            pdfBase64: payloadData.dataBase64,
+            savedPdfBase64: payloadData.dataBase64,
+            cleanPdfBase64: payloadData.dataBase64,
+            pdfHighlights: anno?.highlights ?? [],
+            pdfNotes: anno?.notes ?? [],
+            pdfPaperTheme: anno?.paperTheme ?? "white",
+            pdfCurrentPage: anno?.currentPage ?? 1,
+            modifiedAt: payloadData.modifiedAt,
+            size: payloadData.size,
+            encrypted: payloadData.encrypted ?? false,
+            encryptedHeader: payloadData.encryptedHeader ?? null,
+            readOnly: false,
+          });
+          state.addDoc(restoredDoc);
+          opened.add(path.toLowerCase());
+          continue;
+        }
+
         const payloadData = await invoke<FilePayload>("read_markdown_file", { path });
         if (payloadData.size > SESSION_CONTENT_LIMIT * 4) continue;
         const restoredDoc = docFromPayload(payloadData);

@@ -105,6 +105,8 @@ export function PdfViewer({ docId, isDark }: PdfViewerProps) {
 
   // 重载后保持当前页锚定
   const targetPageAfterReload = useRef<number | null>(null);
+  // 记录已成功加载的 Base64 内容，避免相同内容重复重载导致滚动位置重置
+  const loadedBase64Ref = useRef<string>("");
 
   const pdfBase64 = doc?.pdfBase64 ?? "";
   const docName = doc?.filePath ? fileName(doc.filePath) : "PDF 文档";
@@ -160,6 +162,10 @@ export function PdfViewer({ docId, isDark }: PdfViewerProps) {
   const loadPdf = useCallback(
     async (password?: string) => {
       if (!pdfBase64) return;
+      // 关键守卫：如果相同的二进制内容已经加载过，绝对不重新 loadPdf，防止页面重新卸载导致滚动跳顶
+      if (loadedBase64Ref.current === pdfBase64 && pdfProxy) {
+        return;
+      }
       setLoading(true);
       setError(null);
 
@@ -188,6 +194,7 @@ export function PdfViewer({ docId, isDark }: PdfViewerProps) {
         const proxy = await loadingTask.promise;
         setPdfProxy(proxy);
         setNumPages(proxy.numPages);
+        loadedBase64Ref.current = pdfBase64;
 
         // 关键修复：重载或旋转时保留用户当前的页码，而不是重置到第 1 页
         const existingDoc = useAppStore.getState().docs.find((d) => d.id === docId);
@@ -195,7 +202,7 @@ export function PdfViewer({ docId, isDark }: PdfViewerProps) {
           targetPageAfterReload.current || existingDoc?.pdfCurrentPage || currentPage || 1;
         const safePage = Math.min(proxy.numPages, Math.max(1, keepPage));
         setCurrentPage(safePage);
-        targetPageAfterReload.current = null;
+        targetPageAfterReload.current = safePage;
 
         useAppStore.getState().patchDoc(docId, {
           pdfTotalPages: proxy.numPages,
@@ -253,6 +260,7 @@ export function PdfViewer({ docId, isDark }: PdfViewerProps) {
     void loadPdf();
     return () => {
       unregisterPdfDocument(docId);
+      loadedBase64Ref.current = "";
     };
   }, [loadPdf, docId]);
 
@@ -278,11 +286,17 @@ export function PdfViewer({ docId, isDark }: PdfViewerProps) {
     if (!pdfProxy) return;
     const targetPage = targetPageAfterReload.current;
     if (targetPage && targetPage >= 1) {
-      const timer = setTimeout(() => {
+      const timer1 = setTimeout(() => {
+        scrollToPage(targetPage);
+      }, 60);
+      const timer2 = setTimeout(() => {
         scrollToPage(targetPage);
         targetPageAfterReload.current = null;
-      }, 60);
-      return () => clearTimeout(timer);
+      }, 200);
+      return () => {
+        clearTimeout(timer1);
+        clearTimeout(timer2);
+      };
     }
   }, [pdfProxy, scrollToPage]);
 
