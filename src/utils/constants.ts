@@ -41,13 +41,17 @@ export const OPENABLE_EXTENSIONS = [
   ...CODE_EXTENSIONS,
 ];
 
-/** 打开对话框过滤器（只显示可支持的文件类型，屏蔽不支持的文件） */
+/** 打开对话框过滤器（精简分类显示，避免单个选项因扩展名过多导致下拉列表超长） */
 export const OPEN_DIALOG_FILTERS = [
-  { name: "所有支持的文件", extensions: OPENABLE_EXTENSIONS },
-  { name: "Markdown 文件", extensions: MARKDOWN_EXTENSIONS },
-  { name: "PDF 文档", extensions: PDF_EXTENSIONS },
-  { name: "代码与配置文件", extensions: CODE_EXTENSIONS },
-  { name: "纯文本文件", extensions: TEXT_EXTENSIONS },
+  { name: "常用支持文件", extensions: ["md", "markdown", "pdf", "txt", "json", "js", "ts", "html", "py", "rs"] },
+  { name: "Markdown 文档 (*.md)", extensions: ["md", "markdown", "mdown"] },
+  { name: "PDF 文档 (*.pdf)", extensions: ["pdf"] },
+  { name: "纯文本文档 (*.txt)", extensions: ["txt", "log", "ini", "conf"] },
+  {
+    name: "常见代码与数据",
+    extensions: ["json", "js", "ts", "py", "rs", "go", "java", "c", "cpp", "yaml", "yml", "toml", "sql", "sh", "bat", "ps1"],
+  },
+  { name: "所有文件 (*.*)", extensions: ["*"] },
 ];
 
 /** 支持的文件编码（与 Rust 端保持一致） */

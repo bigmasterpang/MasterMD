@@ -59,6 +59,7 @@ export type IconName =
   | "lock"
   | "rotate-cw"
   | "rotate-ccw"
+  | "rotate-all"
   | "zoom-in"
   | "zoom-out"
   | "file-pdf"
@@ -266,6 +267,12 @@ const PATHS: Record<IconName, string[]> = {
   "rotate-ccw": [
     "M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8",
     "M3 3v5h5",
+  ],
+  "rotate-all": [
+    "M7 2h10a2 2 0 0 1 2 2v8",
+    "M4 6h10a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2z",
+    "M21 16l-3 3-3-3",
+    "M18 19v-4a3 3 0 0 0-3-3h-1",
   ],
   "zoom-in": [
     "M21 21l-6-6m2-5a7 7 0 1 1-14 0 7 7 0 0 1 14 0z",

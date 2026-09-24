@@ -7,7 +7,7 @@ import { ContextMenu, type ContextMenuItem } from "../common/ContextMenu";
 import { useAppStore } from "../../stores/appStore";
 import { askPdfPassword, showMessage } from "../../stores/dialogStore";
 import { fileName } from "../../utils/filePath";
-import type { PdfNote } from "../../types";
+import type { PdfHighlight, PdfNote } from "../../types";
 import {
   addPdfHighlight,
   addPdfNote,
@@ -24,6 +24,7 @@ import {
   rotateAllPdfPages,
   rotatePdfPage,
   unregisterPdfDocument,
+  updatePdfHighlight,
   updatePdfNote,
   type OutlineItem,
 } from "./pdfService";
@@ -81,7 +82,10 @@ export function PdfViewer({ docId, isDark }: PdfViewerProps) {
   const [currentPage, setCurrentPage] = useState(1);
   const [scale, setScale] = useState<number>(1.2);
   const [fitMode, setFitMode] = useState<"custom" | "width" | "page">("width");
+
+  // 展开的批注/便签状态
   const [activeNoteId, setActiveNoteId] = useState<string | null>(null);
+  const [activeCommentHlId, setActiveCommentHlId] = useState<string | null>(null);
 
   // 浮层菜单位置状态（采用 fixed 坐标，避免被工具栏截断）
   const [themeMenuPos, setThemeMenuPos] = useState<{ left: number; top: number } | null>(null);
@@ -111,6 +115,23 @@ export function PdfViewer({ docId, isDark }: PdfViewerProps) {
     () => PDF_PAPER_THEMES.find((t) => t.id === paperTheme) || PDF_PAPER_THEMES[0],
     [paperTheme],
   );
+
+  // 监听来自侧边栏的聚焦标注事件
+  useEffect(() => {
+    const handler = (e: any) => {
+      if (e.detail?.docId === docId) {
+        if (e.detail.type === "note") {
+          setActiveNoteId(e.detail.annotationId);
+          setActiveCommentHlId(null);
+        } else if (e.detail.type === "highlight") {
+          setActiveCommentHlId(e.detail.annotationId);
+          setActiveNoteId(null);
+        }
+      }
+    };
+    window.addEventListener("pdf-focus-annotation" as any, handler);
+    return () => window.removeEventListener("pdf-focus-annotation" as any, handler);
+  }, [docId]);
 
   // 点击外部关闭弹出层菜单
   useEffect(() => {
@@ -381,7 +402,7 @@ export function PdfViewer({ docId, isDark }: PdfViewerProps) {
     const pageRect = pageEl ? pageEl.getBoundingClientRect() : null;
 
     if (text.length > 0 && clientRects.length > 0) {
-      // 1. 划词选区模式：弹出复制、添加注释、高亮菜单
+      // 1. 划词选区模式：弹出复制、高亮并添加注释、高亮菜单
       e.preventDefault();
       setPageContextMenu(null);
       setSelectionMenu({
@@ -393,7 +414,7 @@ export function PdfViewer({ docId, isDark }: PdfViewerProps) {
         pageRect,
       });
     } else {
-      // 2. 空白或非文本区域：弹出页面实用功能菜单（添加附注、复制页面为图片、另存、旋转等）
+      // 2. 空白或非文本区域：弹出页面实用功能菜单（添加便签、复制页面为图片、另存、旋转等）
       e.preventDefault();
       window.getSelection()?.removeAllRanges();
       setSelectionMenu(null);
@@ -415,7 +436,7 @@ export function PdfViewer({ docId, isDark }: PdfViewerProps) {
     }
   };
 
-  // 划词选区右键菜单（支持复制、针对选中文本添加注释、以及多种高亮）
+  // 划词选区右键菜单：支持先添加高亮，再针对高亮进行注释
   const selectionMenuGroups = useMemo<ContextMenuItem[][]>(() => {
     if (!selectionMenu) return [];
     const pageHls = (doc?.pdfHighlights ?? []).filter((h) => h.page === selectionMenu.pageNum);
@@ -435,25 +456,26 @@ export function PdfViewer({ docId, isDark }: PdfViewerProps) {
           },
         },
         {
-          label: "为此文本添加注释",
+          label: "高亮并添加注释",
           icon: "message-square" as any,
           onClick: () => {
             if (selectionMenu.pageRect && selectionMenu.clientRects.length > 0) {
-              const firstRect = selectionMenu.clientRects[0];
-              const pRect = selectionMenu.pageRect;
-              const xP = Math.max(2, Math.min(95, ((firstRect.left - pRect.left) / pRect.width) * 100));
-              const yP = Math.max(2, Math.min(95, ((firstRect.top - pRect.top) / pRect.height) * 100));
-
-              const quoteText =
-                selectionMenu.selectedText.length > 60
-                  ? `“${selectionMenu.selectedText.slice(0, 60)}…”\n`
-                  : `“${selectionMenu.selectedText}”\n`;
-
-              const newNote = addPdfNote(docId, selectionMenu.pageNum, xP, yP, quoteText);
-              setActiveNoteId(newNote.id);
+              const newHl = addPdfHighlight(
+                docId,
+                selectionMenu.pageNum,
+                selectionMenu.clientRects,
+                selectionMenu.pageRect,
+                "yellow",
+                selectionMenu.selectedText,
+                " ", // 初始化非空注释，触发注释卡片展现
+              );
+              if (newHl) {
+                setActiveCommentHlId(newHl.id);
+                setActiveNoteId(null);
+              }
               window.getSelection()?.removeAllRanges();
-              setSelectionMenu(null);
             }
+            setSelectionMenu(null);
           },
         },
       ],
@@ -550,11 +572,20 @@ export function PdfViewer({ docId, isDark }: PdfViewerProps) {
     ];
   }, [selectionMenu, docId, doc?.pdfHighlights]);
 
-  // 高亮项自身右键菜单（支持删除高亮）
+  // 高亮项自身右键菜单（支持为高亮添加/编辑注释与删除）
   const highlightMenuGroups = useMemo<ContextMenuItem[][]>(() => {
     if (!highlightMenu) return [];
     return [
       [
+        {
+          label: "添加 / 编辑注释",
+          icon: "message-square" as any,
+          onClick: () => {
+            setActiveCommentHlId(highlightMenu.highlightId);
+            setActiveNoteId(null);
+            setHighlightMenu(null);
+          },
+        },
         {
           label: "移除此高亮",
           icon: "trash",
@@ -583,7 +614,7 @@ export function PdfViewer({ docId, isDark }: PdfViewerProps) {
     ];
   }, [highlightMenu, docId]);
 
-  // 空白处/非文本区域右键菜单（添加便签附注、复制页面为图片、另存此页等实用功能）
+  // 空白处/非文本区域右键菜单（添加便签附注、复制页面为图片、另存此页、顺/逆时针旋转等实用功能）
   const pageContextMenuGroups = useMemo<ContextMenuItem[][]>(() => {
     if (!pageContextMenu) return [];
     const pNum = pageContextMenu.pageNum;
@@ -598,6 +629,7 @@ export function PdfViewer({ docId, isDark }: PdfViewerProps) {
           onClick: () => {
             const newNote = addPdfNote(docId, pNum, xP, yP);
             setActiveNoteId(newNote.id);
+            setActiveCommentHlId(null);
             setPageContextMenu(null);
           },
         },
@@ -643,6 +675,15 @@ export function PdfViewer({ docId, isDark }: PdfViewerProps) {
           },
         },
         {
+          label: "逆时针旋转此页 90°",
+          icon: "rotate-ccw",
+          onClick: () => {
+            setPageContextMenu(null);
+            targetPageAfterReload.current = pNum;
+            void rotatePdfPage(docId, pNum, false);
+          },
+        },
+        {
           label: "删除当前页",
           icon: "trash",
           onClick: () => {
@@ -683,7 +724,7 @@ export function PdfViewer({ docId, isDark }: PdfViewerProps) {
 
   return (
     <div className="relative flex h-full w-full flex-col overflow-hidden bg-panel">
-      {/* PDF 顶置工具栏（使用 overflow-visible 保证下拉浮窗正常显示） */}
+      {/* PDF 顶置工具栏 */}
       <div className="flex h-9 shrink-0 items-center justify-between gap-1 border-b border-line bg-panel px-2 text-[12px] text-muted relative z-20">
         {/* 左侧：侧栏切换 & 页码跳转 */}
         <div className="flex shrink-0 items-center gap-1">
@@ -816,7 +857,7 @@ export function PdfViewer({ docId, isDark }: PdfViewerProps) {
 
           <div className="mx-1 h-4 w-px shrink-0 bg-line" />
 
-          {/* 自定义阅读底色切换器（置于中间，提供多个颜色选项，防止蓝块填满） */}
+          {/* 自定义阅读底色切换器 */}
           <div>
             <button
               ref={themeBtnRef}
@@ -845,7 +886,7 @@ export function PdfViewer({ docId, isDark }: PdfViewerProps) {
           </div>
         </div>
 
-        {/* 右侧：编辑与页面操作 */}
+        {/* 右侧：编辑与页面操作（区分单页旋转与全部旋转图标） */}
         <div className="flex shrink-0 items-center gap-0.5 sm:gap-1">
           <button
             type="button"
@@ -869,7 +910,7 @@ export function PdfViewer({ docId, isDark }: PdfViewerProps) {
             }}
             className="flex h-7 shrink-0 whitespace-nowrap items-center gap-1 rounded px-1.5 hover:bg-hover hover:text-fg"
           >
-            <Icon name="rotate-cw" size={13} className="shrink-0" />
+            <Icon name="rotate-all" size={13} className="shrink-0" />
             <span className="hidden 2xl:inline whitespace-nowrap">旋转全部</span>
           </button>
 
@@ -1042,6 +1083,8 @@ export function PdfViewer({ docId, isDark }: PdfViewerProps) {
                   notes={(doc?.pdfNotes ?? []).filter((n) => n.page === pNum)}
                   activeNoteId={activeNoteId}
                   setActiveNoteId={setActiveNoteId}
+                  activeCommentHlId={activeCommentHlId}
+                  setActiveCommentHlId={setActiveCommentHlId}
                   onHighlightContextMenu={(x, y, hlId, p) =>
                     setHighlightMenu({ x, y, highlightId: hlId, pageNum: p })
                   }
@@ -1096,6 +1139,8 @@ function PdfPage({
   notes,
   activeNoteId,
   setActiveNoteId,
+  activeCommentHlId,
+  setActiveCommentHlId,
   onHighlightContextMenu,
 }: {
   pdfProxy: pdfjsLib.PDFDocumentProxy | null;
@@ -1107,6 +1152,8 @@ function PdfPage({
   notes: ReturnType<typeof useAppStore.getState>["docs"][0]["pdfNotes"];
   activeNoteId: string | null;
   setActiveNoteId: (id: string | null) => void;
+  activeCommentHlId: string | null;
+  setActiveCommentHlId: (id: string | null) => void;
   onHighlightContextMenu: (x: number, y: number, highlightId: string, pageNum: number) => void;
 }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -1267,42 +1314,82 @@ function PdfPage({
             }}
           />
 
-          {/* 交互式高亮标注遮罩层：支持点击移除与右键菜单移除 */}
+          {/* 交互式高亮标注遮罩层：高亮矩形 + 附带的划词注释小角标 */}
           {highlights && highlights.length > 0 ? (
             <div className="absolute inset-0 pointer-events-none z-10">
-              {highlights.map((hl) => (
-                <div key={hl.id} className="contents pointer-events-auto">
-                  {hl.rects.map((r, i) => (
-                    <div
-                      key={`${hl.id}-${i}`}
-                      data-highlight-id={hl.id}
-                      style={{
-                        left: `${r.xPercent}%`,
-                        top: `${r.yPercent}%`,
-                        width: `${r.wPercent}%`,
-                        height: `${r.hPercent}%`,
-                        backgroundColor:
-                          hl.color === "green"
-                            ? "rgba(74, 222, 128, 0.45)"
-                            : hl.color === "pink"
-                              ? "rgba(244, 114, 182, 0.45)"
-                              : "rgba(250, 204, 21, 0.45)",
-                      }}
-                      className="absolute rounded-xs mix-blend-multiply cursor-pointer hover:opacity-80 transition-opacity"
-                      title="点击或右键可移除此高亮标注"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        removePdfHighlight(docId, hl.id);
-                      }}
-                      onContextMenu={(e) => {
-                        e.preventDefault();
-                        e.stopPropagation();
-                        onHighlightContextMenu(e.clientX, e.clientY, hl.id, pageNum);
-                      }}
-                    />
-                  ))}
-                </div>
-              ))}
+              {highlights.map((hl) => {
+                const hasComment = Boolean(hl.comment && hl.comment.trim());
+                const firstRect = hl.rects[0];
+                return (
+                  <div key={hl.id} className="contents pointer-events-auto">
+                    {hl.rects.map((r, i) => (
+                      <div
+                        key={`${hl.id}-${i}`}
+                        data-highlight-id={hl.id}
+                        style={{
+                          left: `${r.xPercent}%`,
+                          top: `${r.yPercent}%`,
+                          width: `${r.wPercent}%`,
+                          height: `${r.hPercent}%`,
+                          backgroundColor:
+                            hl.color === "green"
+                              ? "rgba(74, 222, 128, 0.45)"
+                              : hl.color === "pink"
+                                ? "rgba(244, 114, 182, 0.45)"
+                                : "rgba(250, 204, 21, 0.45)",
+                        }}
+                        className="absolute rounded-xs mix-blend-multiply cursor-pointer hover:opacity-85 transition-opacity"
+                        title={
+                          hasComment
+                            ? `注释: ${hl.comment}\n(点击查看/编辑注释，右键移除)`
+                            : "划词高亮 (点击或右键可添加注释或移除)"
+                        }
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setActiveCommentHlId(hl.id);
+                          setActiveNoteId(null);
+                        }}
+                        onContextMenu={(e) => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          onHighlightContextMenu(e.clientX, e.clientY, hl.id, pageNum);
+                        }}
+                      />
+                    ))}
+
+                    {/* 划词高亮附带的注释图钉角标 */}
+                    {hasComment && firstRect ? (
+                      <div
+                        style={{
+                          left: `${firstRect.xPercent + firstRect.wPercent}%`,
+                          top: `${firstRect.yPercent}%`,
+                        }}
+                        className="absolute -translate-y-1/2 -translate-x-1/2 z-20 cursor-pointer pointer-events-auto"
+                        title={`查看注释: ${hl.comment}`}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setActiveCommentHlId(hl.id);
+                          setActiveNoteId(null);
+                        }}
+                      >
+                        <span className="flex h-4 w-4 items-center justify-center rounded-full bg-amber-500 text-white text-[9px] shadow-sm hover:scale-110 transition-transform">
+                          💬
+                        </span>
+                      </div>
+                    ) : null}
+
+                    {/* 展开的划词高亮注释卡片 */}
+                    {activeCommentHlId === hl.id ? (
+                      <PdfHighlightCommentCard
+                        highlight={hl}
+                        docId={docId}
+                        isOpen={true}
+                        onClose={() => setActiveCommentHlId(null)}
+                      />
+                    ) : null}
+                  </div>
+                );
+              })}
             </div>
           ) : null}
 
@@ -1315,7 +1402,10 @@ function PdfPage({
                   note={note}
                   docId={docId}
                   isOpen={activeNoteId === note.id}
-                  onOpen={() => setActiveNoteId(note.id)}
+                  onOpen={() => {
+                    setActiveNoteId(note.id);
+                    setActiveCommentHlId(null);
+                  }}
                   onClose={() => setActiveNoteId(null)}
                 />
               ))}
@@ -1326,6 +1416,143 @@ function PdfPage({
         /* 视口外虚拟骨架占位 */
         <div className="flex h-full w-full items-center justify-center text-[12px] text-faint">
           <span className="font-mono opacity-40">第 {pageNum} 页</span>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** 划词高亮附带的注释卡片组件（先添加高亮，再针对高亮进行注释） */
+function PdfHighlightCommentCard({
+  highlight,
+  docId,
+  isOpen,
+  onClose,
+}: {
+  highlight: PdfHighlight;
+  docId: string;
+  isOpen: boolean;
+  onClose: () => void;
+}) {
+  const [comment, setComment] = useState(highlight.comment?.trim() || "");
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  useEffect(() => {
+    setComment(highlight.comment?.trim() || "");
+  }, [highlight.comment]);
+
+  useEffect(() => {
+    if (isOpen) {
+      setTimeout(() => textareaRef.current?.focus(), 60);
+    }
+  }, [isOpen]);
+
+  const handleBlur = () => {
+    updatePdfHighlight(docId, highlight.id, { comment: comment.trim() });
+  };
+
+  const firstRect = highlight.rects[0] || { xPercent: 50, yPercent: 50, wPercent: 10, hPercent: 2 };
+  const isRightSide = firstRect.xPercent > 50;
+  const isBottomSide = firstRect.yPercent > 65;
+
+  const cardPosClass = `${isRightSide ? "right-2" : "left-2"} ${
+    isBottomSide ? "bottom-2" : "top-2"
+  }`;
+
+  return (
+    <div
+      style={{
+        left: `${firstRect.xPercent + (isRightSide ? 0 : firstRect.wPercent)}%`,
+        top: `${firstRect.yPercent}%`,
+      }}
+      className="absolute -translate-y-1/2 pointer-events-auto z-40"
+      onClick={(e) => e.stopPropagation()}
+      onContextMenu={(e) => e.stopPropagation()}
+    >
+      {isOpen && (
+        <div
+          className={`absolute ${cardPosClass} z-50 w-72 rounded-lg border border-amber-300 bg-amber-50 p-3 shadow-2xl backdrop-blur-md text-neutral-900 dark:bg-neutral-900 dark:text-neutral-100 dark:border-amber-700/60`}
+          onClick={(e) => e.stopPropagation()}
+        >
+          <div className="flex items-center justify-between pb-1.5 border-b border-line/60">
+            <div className="flex items-center gap-1.5 text-[11px] font-semibold text-fg">
+              <Icon name="message-square" size={12} className="text-accent" />
+              <span>划词注释</span>
+            </div>
+            <div className="flex items-center gap-1">
+              {(["yellow", "green", "pink"] as const).map((c) => (
+                <button
+                  key={c}
+                  type="button"
+                  onClick={() => updatePdfHighlight(docId, highlight.id, { color: c })}
+                  className={`h-3 w-3 rounded-full border transition-transform ${
+                    highlight.color === c ? "scale-125 border-fg" : "border-line/60 hover:scale-110"
+                  } ${
+                    c === "yellow"
+                      ? "bg-amber-400"
+                      : c === "green"
+                        ? "bg-emerald-400"
+                        : "bg-pink-400"
+                  }`}
+                />
+              ))}
+              <div className="mx-1 h-3 w-px bg-line/60" />
+              <button
+                type="button"
+                title="删除此高亮及注释"
+                onClick={() => {
+                  removePdfHighlight(docId, highlight.id);
+                  onClose();
+                }}
+                className="rounded p-0.5 text-danger/80 hover:bg-danger/10 hover:text-danger"
+              >
+                <Icon name="trash" size={12} />
+              </button>
+              <button
+                type="button"
+                title="关闭"
+                onClick={onClose}
+                className="rounded p-0.5 text-muted hover:bg-hover hover:text-fg"
+              >
+                <Icon name="x" size={12} />
+              </button>
+            </div>
+          </div>
+
+          {highlight.text ? (
+            <div className="mt-1.5 rounded bg-black/5 dark:bg-white/5 p-1.5 text-[11px] text-muted italic line-clamp-2">
+              “{highlight.text}”
+            </div>
+          ) : null}
+
+          <textarea
+            ref={textareaRef}
+            value={comment}
+            onChange={(e) => setComment(e.target.value)}
+            onBlur={handleBlur}
+            placeholder="写下你对此段文字的批注或笔记…"
+            rows={3}
+            className="mt-2 w-full resize-none rounded border border-line/70 bg-input p-1.5 text-[12px] text-fg outline-none focus:border-accent"
+          />
+
+          <div className="mt-2 flex items-center justify-between text-[10.5px] text-faint">
+            <span>
+              {new Date(highlight.createdAt).toLocaleTimeString([], {
+                hour: "2-digit",
+                minute: "2-digit",
+              })}
+            </span>
+            <button
+              type="button"
+              onClick={() => {
+                handleBlur();
+                onClose();
+              }}
+              className="rounded bg-accent px-2 py-0.5 text-[11px] font-medium text-accent-contrast shadow-2xs hover:brightness-105"
+            >
+              完成
+            </button>
+          </div>
         </div>
       )}
     </div>

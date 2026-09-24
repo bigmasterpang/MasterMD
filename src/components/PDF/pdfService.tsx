@@ -111,6 +111,7 @@ export function jumpToPdfPage(docId: string, pageNum: number) {
 /* ---------------- PDF 高亮标注（动态、可撤销/取消） ---------------- */
 
 /** 添加高亮标注 */
+/** 添加高亮标注（支持同时附加批注文本） */
 export function addPdfHighlight(
   docId: string,
   pageNum: number,
@@ -118,9 +119,10 @@ export function addPdfHighlight(
   pageBoundingRect: DOMRect,
   colorType: "yellow" | "green" | "pink" = "yellow",
   text?: string,
-) {
+  comment?: string,
+): PdfHighlight | null {
   const doc = useAppStore.getState().docs.find((d) => d.id === docId);
-  if (!doc) return;
+  if (!doc) return null;
 
   const rects: Array<{ xPercent: number; yPercent: number; wPercent: number; hPercent: number }> = [];
   for (const r of clientRects) {
@@ -132,7 +134,7 @@ export function addPdfHighlight(
     rects.push({ xPercent, yPercent, wPercent, hPercent });
   }
 
-  if (rects.length === 0) return;
+  if (rects.length === 0) return null;
 
   const newHighlight: PdfHighlight = {
     id: `hl-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`,
@@ -140,6 +142,7 @@ export function addPdfHighlight(
     rects,
     color: colorType,
     text,
+    comment,
     createdAt: Date.now(),
   };
 
@@ -148,6 +151,53 @@ export function addPdfHighlight(
     pdfHighlights: [...existing, newHighlight],
     isDirty: true,
   });
+  return newHighlight;
+}
+
+/** 更新高亮标注（内容批注、颜色等） */
+export function updatePdfHighlight(docId: string, highlightId: string, patch: Partial<PdfHighlight>) {
+  const doc = useAppStore.getState().docs.find((d) => d.id === docId);
+  if (!doc || !doc.pdfHighlights) return;
+  useAppStore.getState().patchDoc(docId, {
+    pdfHighlights: doc.pdfHighlights.map((h) => (h.id === highlightId ? { ...h, ...patch } : h)),
+    isDirty: true,
+  });
+}
+
+/** 批量删除标注与便签 */
+export function batchDeletePdfAnnotations(
+  docId: string,
+  targetIds: { highlightIds?: string[]; noteIds?: string[] },
+) {
+  const doc = useAppStore.getState().docs.find((d) => d.id === docId);
+  if (!doc) return;
+
+  const hlSet = new Set(targetIds.highlightIds ?? []);
+  const noteSet = new Set(targetIds.noteIds ?? []);
+
+  const nextHighlights = (doc.pdfHighlights ?? []).filter((h) => !hlSet.has(h.id));
+  const nextNotes = (doc.pdfNotes ?? []).filter((n) => !noteSet.has(n.id));
+
+  useAppStore.getState().patchDoc(docId, {
+    pdfHighlights: nextHighlights,
+    pdfNotes: nextNotes,
+    isDirty: true,
+  });
+}
+
+/** 聚焦并打开指定标注或便签 */
+export function focusPdfAnnotation(
+  docId: string,
+  pageNum: number,
+  annotationId: string,
+  type: "highlight" | "note",
+) {
+  jumpToPdfPage(docId, pageNum);
+  window.dispatchEvent(
+    new CustomEvent("pdf-focus-annotation", {
+      detail: { docId, pageNum, annotationId, type },
+    }),
+  );
 }
 
 /** 移除单个高亮标注（支持撤销/取消） */

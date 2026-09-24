@@ -2093,7 +2093,7 @@ dependencies = [
 
 [[package]]
 name = "mastermd"
-version = "0.15.4"
+version = "0.15.5"
 dependencies = [
  "encoding_rs",
  "notify",

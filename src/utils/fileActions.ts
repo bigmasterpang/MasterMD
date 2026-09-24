@@ -416,13 +416,19 @@ export async function closeAllDocsWithConfirm(): Promise<boolean> {
   return true;
 }
 
-export async function newDocument(type: "markdown" | "blank" = "markdown"): Promise<void> {
+export async function newDocument(
+  type: "markdown" | "blank" = "markdown",
+  targetPane?: 0 | 1,
+): Promise<void> {
   if (!(await ensureNoDirty(getActiveDoc()))) return;
   const isMd = type === "markdown";
+  const activePane =
+    targetPane !== undefined ? targetPane : (useAppStore.getState().layout.activePane ?? 0);
   const doc = createDoc({
     content: isMd ? EMPTY_DOC_PLACEHOLDER : "",
     savedContent: isMd ? EMPTY_DOC_PLACEHOLDER : "",
     docType: type,
+    pane: activePane,
   });
   useAppStore.getState().addDoc(doc);
   useAppStore.getState().setViewMode("source");

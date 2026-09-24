@@ -129,6 +129,7 @@ export interface PdfHighlight {
   }>;
   color: "yellow" | "green" | "pink";
   text?: string;
+  comment?: string;
   createdAt: number;
 }
 

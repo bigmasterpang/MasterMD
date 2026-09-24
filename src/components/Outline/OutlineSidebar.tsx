@@ -7,14 +7,20 @@ import { isMarkdownDoc, isPdfDoc } from "../../utils/filePath";
 import { analyzeSymbols, navSupported, type NavItem, type NavKind } from "../../utils/outline";
 import type { HeadingItem } from "../../types";
 import {
+  batchDeletePdfAnnotations,
+  deletePdfNote,
   deletePdfPage,
+  focusPdfAnnotation,
   jumpToPdfPage,
   PdfThumbnail,
+  removePdfHighlight,
   reorderPdfPages,
   rotatePdfPage,
   usePdfOutline,
   usePdfProxy,
 } from "../PDF/pdfService";
+import { askConfirm, showMessage } from "../../stores/dialogStore";
+import { fileName } from "../../utils/filePath";
 
 interface Props {
   previewRef?: React.RefObject<HTMLDivElement | null>;
@@ -49,7 +55,7 @@ export function OutlineSidebar({ previewRef, standalone = false }: Props) {
   return <MarkdownOutlineSection doc={doc} previewRef={previewRef} standalone={standalone} />;
 }
 
-/** PDF 专用大纲与缩略图导航组件 */
+/** PDF 专用大纲、缩略图与注释便签导航组件 */
 function PdfOutlineSection({
   doc,
   standalone,
@@ -59,13 +65,16 @@ function PdfOutlineSection({
 }) {
   const pdfProxy = usePdfProxy(doc.id);
   const pdfOutline = usePdfOutline(doc.id);
-  const [tab, setTab] = useState<"outline" | "thumbnails">("outline");
+  const [tab, setTab] = useState<"outline" | "thumbnails" | "annotations">("outline");
   const [filterText, setFilterText] = useState("");
   const [draggedPageIndex, setDraggedPageIndex] = useState<number | null>(null);
   const listRef = useRef<HTMLDivElement>(null);
 
   const numPages = doc.pdfTotalPages || pdfProxy?.numPages || 1;
   const currentPage = doc.pdfCurrentPage || 1;
+
+  // 统计标注与便签总数
+  const totalAnnotations = (doc.pdfHighlights?.length || 0) + (doc.pdfNotes?.length || 0);
 
   // 过滤大纲
   const filteredOutline = useMemo(() => {
@@ -83,7 +92,7 @@ function PdfOutlineSection({
   }, [tab, currentPage]);
 
   const containerClass = standalone
-    ? "print-hide flex w-[260px] shrink-0 flex-col border-r border-line bg-sidebar"
+    ? "print-hide flex w-[280px] shrink-0 flex-col border-r border-line bg-sidebar"
     : "flex h-full min-h-0 flex-col overflow-hidden bg-sidebar";
 
   return (
@@ -92,7 +101,7 @@ function PdfOutlineSection({
       <div className="flex h-8 shrink-0 items-center justify-between border-b border-line px-2 text-[11px] font-medium text-faint">
         <div className="flex items-center gap-1.5">
           <span className="font-medium uppercase tracking-wide text-fg/80">
-            PDF 导航
+            PDF
           </span>
           <span className="rounded bg-hover px-1 py-0.5 text-[10px] text-faint">
             {numPages} 页
@@ -100,7 +109,7 @@ function PdfOutlineSection({
         </div>
 
         <div className="flex items-center gap-1">
-          {/* 大纲 / 缩略图切换 */}
+          {/* 大纲 / 缩略图 / 注释 切换 */}
           <div className="flex rounded border border-line bg-input p-0.5">
             <button
               type="button"
@@ -127,6 +136,24 @@ function PdfOutlineSection({
             >
               <Icon name="grid" size={11} />
               <span>缩略图</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setTab("annotations")}
+              title="注释与便签"
+              className={`flex items-center gap-1 rounded px-1.5 py-0.5 text-[10.5px] transition-colors ${
+                tab === "annotations"
+                  ? "bg-panel font-medium text-accent shadow-xs"
+                  : "text-muted hover:text-fg"
+              }`}
+            >
+              <Icon name="message-square" size={11} />
+              <span>注释</span>
+              {totalAnnotations > 0 ? (
+                <span className="rounded-full bg-accent/20 px-1 text-[9px] font-semibold text-accent leading-none">
+                  {totalAnnotations}
+                </span>
+              ) : null}
             </button>
           </div>
 
@@ -214,7 +241,7 @@ function PdfOutlineSection({
             )}
           </div>
         </>
-      ) : (
+      ) : tab === "thumbnails" ? (
         /* 页面缩略图列表 */
         <div ref={listRef} className="min-h-0 flex-1 overflow-y-auto p-2 scrollbar-thin">
           <div className="flex flex-col gap-3">
@@ -275,7 +302,404 @@ function PdfOutlineSection({
             ))}
           </div>
         </div>
+      ) : (
+        /* 注释与便签聚合管理面板 */
+        <PdfAnnotationsView doc={doc} />
       )}
+    </div>
+  );
+}
+
+/** 统一标注数据项接口 */
+interface AnnotationUnifiedItem {
+  id: string;
+  type: "highlight" | "note";
+  page: number;
+  yPercent: number;
+  quoteText?: string;
+  content: string;
+  color?: string;
+  createdAt?: number;
+}
+
+/** PDF 注释与便签专属管理面板组件 */
+function PdfAnnotationsView({
+  doc,
+}: {
+  doc: NonNullable<ReturnType<typeof useAppStore.getState>["docs"][0]>;
+}) {
+  const [filterType, setFilterType] = useState<"all" | "highlight" | "note">("all");
+  const [searchText, setSearchText] = useState("");
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+
+  // 合并高亮与便签数据
+  const allItems = useMemo<AnnotationUnifiedItem[]>(() => {
+    const list: AnnotationUnifiedItem[] = [];
+
+    for (const hl of doc.pdfHighlights ?? []) {
+      list.push({
+        id: hl.id,
+        type: "highlight",
+        page: hl.page,
+        yPercent: hl.rects[0]?.yPercent ?? 0,
+        quoteText: hl.text,
+        content: hl.comment?.trim() ?? "",
+        color: hl.color,
+        createdAt: hl.createdAt,
+      });
+    }
+
+    for (const note of doc.pdfNotes ?? []) {
+      list.push({
+        id: note.id,
+        type: "note",
+        page: note.page,
+        yPercent: note.yPercent,
+        content: note.content.trim(),
+        color: note.color,
+        createdAt: note.createdAt,
+      });
+    }
+
+    list.sort((a, b) => {
+      if (a.page !== b.page) return a.page - b.page;
+      return a.yPercent - b.yPercent;
+    });
+
+    return list;
+  }, [doc.pdfHighlights, doc.pdfNotes]);
+
+  // 过滤后的列表
+  const filteredItems = useMemo(() => {
+    const q = searchText.trim().toLowerCase();
+    return allItems.filter((item) => {
+      if (filterType !== "all" && item.type !== filterType) return false;
+      if (!q) return true;
+      const matchQuote = item.quoteText?.toLowerCase().includes(q);
+      const matchContent = item.content.toLowerCase().includes(q);
+      return Boolean(matchQuote || matchContent);
+    });
+  }, [allItems, searchText, filterType]);
+
+  // 全选 / 反选
+  const allFilteredSelected =
+    filteredItems.length > 0 && filteredItems.every((it) => selectedIds.has(it.id));
+
+  const toggleSelectAll = () => {
+    if (allFilteredSelected) {
+      setSelectedIds(new Set());
+    } else {
+      setSelectedIds(new Set(filteredItems.map((it) => it.id)));
+    }
+  };
+
+  const toggleSelectItem = (id: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    const next = new Set(selectedIds);
+    if (next.has(id)) {
+      next.delete(id);
+    } else {
+      next.add(id);
+    }
+    setSelectedIds(next);
+  };
+
+  // 单个删除
+  const handleDeleteOne = (e: React.MouseEvent, item: AnnotationUnifiedItem) => {
+    e.stopPropagation();
+    if (item.type === "highlight") {
+      removePdfHighlight(doc.id, item.id);
+    } else {
+      deletePdfNote(doc.id, item.id);
+    }
+    if (selectedIds.has(item.id)) {
+      const next = new Set(selectedIds);
+      next.delete(item.id);
+      setSelectedIds(next);
+    }
+  };
+
+  // 批量删除
+  const handleBatchDelete = async () => {
+    if (selectedIds.size === 0) return;
+    const count = selectedIds.size;
+    const confirmed = await askConfirm({
+      title: "批量删除标注",
+      message: `确定要删除已选中的 ${count} 个标注/便签吗？此操作不可撤销。`,
+      confirmText: "确定删除",
+      danger: true,
+    });
+    if (!confirmed) return;
+
+    const highlightIds: string[] = [];
+    const noteIds: string[] = [];
+    for (const id of selectedIds) {
+      if (doc.pdfHighlights?.some((h) => h.id === id)) {
+        highlightIds.push(id);
+      } else if (doc.pdfNotes?.some((n) => n.id === id)) {
+        noteIds.push(id);
+      }
+    }
+    batchDeletePdfAnnotations(doc.id, { highlightIds, noteIds });
+    setSelectedIds(new Set());
+  };
+
+  // 导出为 Markdown
+  const handleExportMarkdown = async () => {
+    if (allItems.length === 0) return;
+    const targets = selectedIds.size > 0
+      ? allItems.filter((it) => selectedIds.has(it.id))
+      : allItems;
+
+    const docTitle = doc.filePath ? fileName(doc.filePath) : "PDF 文档";
+    let md = `# 《${docTitle}》注释与便签笔记\n\n`;
+    md += `> 共导出 ${targets.length} 条标注记录\n\n---\n\n`;
+
+    const pageMap = new Map<number, AnnotationUnifiedItem[]>();
+    for (const it of targets) {
+      const arr = pageMap.get(it.page) || [];
+      arr.push(it);
+      pageMap.set(it.page, arr);
+    }
+
+    for (const [page, list] of pageMap) {
+      md += `### 第 ${page} 页\n\n`;
+      for (const it of list) {
+        if (it.type === "highlight") {
+          if (it.quoteText) {
+            md += `> 📌 划词引用: "${it.quoteText.replace(/\n+/g, " ")}"\n\n`;
+          }
+          if (it.content) {
+            md += `✍️ **批注**：${it.content}\n\n`;
+          } else {
+            md += `*(划词高亮标注)*\n\n`;
+          }
+        } else {
+          md += `🏷️ **页面便签**：${it.content}\n\n`;
+        }
+      }
+    }
+
+    try {
+      await navigator.clipboard.writeText(md.trim());
+      await showMessage("导出成功", `已将 ${targets.length} 条笔记导出为 Markdown 格式并已复制到剪贴板！`);
+    } catch {
+      await showMessage("导出失败", "复制到剪贴板失败，请检查系统权限。");
+    }
+  };
+
+  // 计数统计
+  const highlightCount = doc.pdfHighlights?.length || 0;
+  const noteCount = doc.pdfNotes?.length || 0;
+
+  return (
+    <div className="flex min-h-0 flex-1 flex-col font-sans">
+      {/* 搜索与过滤切换 */}
+      <div className="border-b border-line/60 p-2 space-y-1.5">
+        {/* 搜索框 */}
+        <div className="flex items-center gap-1 rounded border border-line/80 bg-input px-1.5 py-0.5 text-[11px]">
+          <Icon name="search" size={11} className="text-faint" />
+          <input
+            type="text"
+            value={searchText}
+            onChange={(e) => setSearchText(e.target.value)}
+            placeholder="搜索批注或引用文字…"
+            className="min-w-0 flex-1 bg-transparent text-fg outline-none placeholder:text-faint"
+          />
+          {searchText ? (
+            <button
+              type="button"
+              onClick={() => setSearchText("")}
+              className="text-faint hover:text-fg"
+            >
+              <Icon name="x" size={10} />
+            </button>
+          ) : null}
+        </div>
+
+        {/* 类别胶囊过滤 */}
+        <div className="flex items-center justify-between text-[10.5px]">
+          <div className="flex items-center gap-1">
+            <button
+              type="button"
+              onClick={() => setFilterType("all")}
+              className={`rounded px-1.5 py-0.5 transition-colors ${
+                filterType === "all"
+                  ? "bg-accent/15 font-medium text-accent"
+                  : "text-muted hover:bg-hover hover:text-fg"
+              }`}
+            >
+              全部 ({allItems.length})
+            </button>
+            <button
+              type="button"
+              onClick={() => setFilterType("highlight")}
+              className={`rounded px-1.5 py-0.5 transition-colors ${
+                filterType === "highlight"
+                  ? "bg-accent/15 font-medium text-accent"
+                  : "text-muted hover:bg-hover hover:text-fg"
+              }`}
+            >
+              划词 ({highlightCount})
+            </button>
+            <button
+              type="button"
+              onClick={() => setFilterType("note")}
+              className={`rounded px-1.5 py-0.5 transition-colors ${
+                filterType === "note"
+                  ? "bg-accent/15 font-medium text-accent"
+                  : "text-muted hover:bg-hover hover:text-fg"
+              }`}
+            >
+              便签 ({noteCount})
+            </button>
+          </div>
+
+          {/* 导出 Markdown 按钮 */}
+          <button
+            type="button"
+            onClick={handleExportMarkdown}
+            disabled={allItems.length === 0}
+            title={
+              selectedIds.size > 0
+                ? `导出选中的 ${selectedIds.size} 项为 Markdown`
+                : "导出全部笔记为 Markdown"
+            }
+            className="flex items-center gap-1 rounded px-1.5 py-0.5 text-muted hover:bg-hover hover:text-fg disabled:opacity-40 transition-colors"
+          >
+            <Icon name="copy" size={11} />
+            <span>导出</span>
+          </button>
+        </div>
+      </div>
+
+      {/* 批量管理操作条 */}
+      {filteredItems.length > 0 ? (
+        <div className="flex items-center justify-between border-b border-line/40 bg-sidebar/80 px-2 py-1 text-[11px] text-faint">
+          <label className="flex cursor-pointer items-center gap-1.5 select-none hover:text-fg">
+            <input
+              type="checkbox"
+              checked={allFilteredSelected}
+              onChange={toggleSelectAll}
+              className="rounded accent-accent h-3 w-3 cursor-pointer"
+            />
+            <span>{selectedIds.size > 0 ? `已选 ${selectedIds.size} 项` : "全选"}</span>
+          </label>
+
+          {selectedIds.size > 0 ? (
+            <button
+              type="button"
+              onClick={handleBatchDelete}
+              className="flex items-center gap-1 rounded bg-danger/10 px-1.5 py-0.5 text-danger hover:bg-danger/20 font-medium transition-colors"
+            >
+              <Icon name="trash" size={10} />
+              <span>删除所选 ({selectedIds.size})</span>
+            </button>
+          ) : null}
+        </div>
+      ) : null}
+
+      {/* 注释与便签列表内容 */}
+      <div className="min-h-0 flex-1 overflow-y-auto p-2 scrollbar-thin space-y-2">
+        {filteredItems.length === 0 ? (
+          <div className="px-3 py-8 text-center text-[12px] text-faint">
+            {searchText
+              ? "未找到匹配的注释或便签。"
+              : "当前暂无注释或便签。\n在正文划词或空白处右键即可添加。"}
+          </div>
+        ) : (
+          filteredItems.map((item) => {
+            const isSelected = selectedIds.has(item.id);
+            const isHl = item.type === "highlight";
+            const dateStr = item.createdAt
+              ? new Date(item.createdAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+              : "";
+
+            return (
+              <div
+                key={item.id}
+                onClick={() => focusPdfAnnotation(doc.id, item.page, item.id, item.type)}
+                className={`group relative flex flex-col gap-1.5 rounded-lg border p-2 text-left cursor-pointer transition-all ${
+                  isSelected
+                    ? "border-accent bg-accent/5 shadow-xs"
+                    : "border-line bg-panel hover:border-line-strong hover:bg-hover"
+                }`}
+              >
+                {/* 顶部元信息：勾选框、类型徽章、页码与悬浮删除 */}
+                <div className="flex items-center justify-between text-[10.5px]">
+                  <div className="flex items-center gap-1.5">
+                    <input
+                      type="checkbox"
+                      checked={isSelected}
+                      onClick={(e) => toggleSelectItem(item.id, e)}
+                      onChange={() => {}}
+                      className="rounded accent-accent h-3 w-3 cursor-pointer"
+                    />
+                    {isHl ? (
+                      <span className="flex items-center gap-1 rounded bg-amber-500/15 px-1 py-0.2 text-[10px] font-medium text-amber-600 dark:text-amber-400">
+                        <span
+                          className={`h-1.5 w-1.5 rounded-full ${
+                            item.color === "green"
+                              ? "bg-green-500"
+                              : item.color === "pink"
+                                ? "bg-pink-500"
+                                : "bg-amber-400"
+                          }`}
+                        />
+                        {item.content ? "批注" : "高亮"}
+                      </span>
+                    ) : (
+                      <span className="flex items-center gap-1 rounded bg-yellow-500/15 px-1 py-0.2 text-[10px] font-medium text-yellow-600 dark:text-yellow-400">
+                        <Icon name="pin" size={9} />
+                        便签
+                      </span>
+                    )}
+                  </div>
+
+                  <div className="flex items-center gap-1">
+                    <span className="font-mono text-[10.5px] text-faint group-hover:text-muted">
+                      第 {item.page} 页
+                    </span>
+                    <button
+                      type="button"
+                      title="删除此标注"
+                      onClick={(e) => handleDeleteOne(e, item)}
+                      className="rounded p-0.5 opacity-0 group-hover:opacity-100 hover:bg-danger/20 hover:text-danger text-faint transition-opacity"
+                    >
+                      <Icon name="trash" size={11} />
+                    </button>
+                  </div>
+                </div>
+
+                {/* 划词引文（如果有） */}
+                {item.quoteText ? (
+                  <div className="rounded-xs border-l-2 border-amber-400/80 bg-hover/40 px-1.5 py-0.5 text-[11px] text-muted italic line-clamp-2 select-none">
+                    "{item.quoteText.replace(/\s+/g, " ").trim()}"
+                  </div>
+                ) : null}
+
+                {/* 批注文本或便签正文 */}
+                {item.content ? (
+                  <div className="text-[11.5px] font-normal text-fg leading-relaxed break-words line-clamp-3">
+                    {item.content}
+                  </div>
+                ) : isHl ? (
+                  <div className="text-[10.5px] text-faint italic select-none">
+                    (划词高亮，未添加批注)
+                  </div>
+                ) : null}
+
+                {/* 底部时间 */}
+                {dateStr ? (
+                  <div className="text-right text-[9.5px] text-faint">
+                    {dateStr}
+                  </div>
+                ) : null}
+              </div>
+            );
+          })
+        )}
+      </div>
     </div>
   );
 }

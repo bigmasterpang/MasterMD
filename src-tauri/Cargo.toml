@@ -1,6 +1,6 @@
 [package]
 name = "mastermd"
-version = "0.15.4"
+version = "0.15.5"
 description = "Windows Markdown Viewer & Editor"
 authors = ["bigmasterpang"]
 edition = "2021"

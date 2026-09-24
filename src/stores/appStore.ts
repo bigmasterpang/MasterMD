@@ -37,7 +37,7 @@ export function createDoc(partial: Partial<DocState> = {}): DocState {
     frontMatter: null,
     frontMatterRaw: null,
     scrollTop: 0,
-    pane: 0,
+    pane: partial.pane !== undefined ? partial.pane : 0,
     ...partial,
   };
 }
@@ -288,6 +288,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
       docs: [...s.docs, finalDoc],
       activeIds,
       activeId: finalDoc.id,
+      layout: { ...s.layout, activePane: docPane },
       gameOpen: false,
     }));
   },

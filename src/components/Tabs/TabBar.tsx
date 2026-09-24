@@ -8,6 +8,7 @@ import { useTabDragStore } from "../../stores/tabDragStore";
 import {
   closeDocWithConfirm,
   newDocument,
+  openFileDialog,
   reloadDocFromDisk,
   saveDoc,
   saveDocAs,
@@ -404,8 +405,9 @@ export function TabBar({ pane = 0 }: Props) {
         {/* 新建标签按钮 */}
         <button
           type="button"
-          title="新建文档 (点击选择类型)"
+          title="新建或打开文档"
           onClick={(e) => {
+            useAppStore.getState().setActivePane(pane);
             const rect = e.currentTarget.getBoundingClientRect();
             setPlusMenu({ x: rect.left, y: rect.bottom + 4 });
           }}
@@ -425,12 +427,18 @@ export function TabBar({ pane = 0 }: Props) {
                   label: "新建 Markdown 文档 (.md)",
                   icon: "file-text",
                   hint: "Ctrl+N",
-                  onClick: () => void newDocument("markdown"),
+                  onClick: () => void newDocument("markdown", pane),
                 },
                 {
                   label: "新建空白文档",
                   icon: "file-plus",
-                  onClick: () => void newDocument("blank"),
+                  onClick: () => void newDocument("blank", pane),
+                },
+                {
+                  label: "打开文件…",
+                  icon: "folder-open",
+                  hint: "Ctrl+O",
+                  onClick: () => void openFileDialog(),
                 },
               ],
             ]}
