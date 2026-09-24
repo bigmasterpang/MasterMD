@@ -7,7 +7,9 @@ import {
   DUNGEON_MAP,
   EQUIP_TEMPLATES,
   MAP_BY_ID,
+  MAPS,
   MATERIAL_MAP,
+  POTIONS,
   MONSTER_MAP,
   QUALITY_AFFIX_COUNT,
   QUALITY_META,
@@ -51,13 +53,14 @@ const pick = <T,>(list: T[]): T => list[rand(0, list.length - 1)];
 export const expForLevel = (level: number) => Math.round(100 * Math.pow(level, 1.6));
 
 /**
- * 等级差收益衰减：越级挑战有少量加成，长期刷低级地图收益骤减。
- * 用于经验与银两（材料掉落不受影响），避免挂低级图刷级。
+ * 等级差收益衰减：越级挑战有少量加成；当怪物比你低 10 级以上时，
+ * 经验与银两归零（材料与装备照常掉落），彻底杜绝挂低级图刷收益。
  */
 export function rewardMultiplier(monsterLevel: number, playerLevel: number): number {
   const diff = monsterLevel - playerLevel;
   if (diff >= 0) return Math.min(1.2, 1 + diff * 0.03);
-  return Math.max(0.08, 1 + diff * 0.12);
+  if (diff <= -10) return 0;
+  return Number((1 + diff * 0.09).toFixed(3));
 }
 
 export const uid = () =>
@@ -253,15 +256,18 @@ export function enhanceCost(item: EquipItem): { silver: number; iron: number } {
   };
 }
 
-/** 掉落判定 */
+/** 掉落判定：普通怪 5%，精英约 40%，首领必掉且有额外机会 */
 export function rollLoot(monster: MonsterDef): EquipItem[] {
   const drops: EquipItem[] = [];
-  const base = monster.boss ? 1 : monster.elite ? 0.5 : 0.055;
+  const base = monster.boss ? 1 : monster.elite ? 0.28 : 0.05;
   if (chance(base)) {
     const quality = rollQuality(monster);
     drops.push(generateEquip({ level: monster.level, quality, from: monster.name }));
   }
-  if (monster.elite && chance(0.25)) {
+  if (monster.elite && chance(0.12)) {
+    drops.push(generateEquip({ level: monster.level, quality: rollQuality(monster), from: monster.name }));
+  }
+  if (monster.boss && chance(0.5)) {
     drops.push(generateEquip({ level: monster.level, quality: rollQuality(monster), from: monster.name }));
   }
   return drops;
@@ -303,6 +309,8 @@ export interface BattleOptions {
   /** 是否使用药品 */
   autoHeal: boolean;
   healThreshold: number;
+  /** 自动用药（按比例恢复），不传则不使用 */
+  potion?: { id: string; name: string; healPct: number; manaPct: number; count: number };
   /** 是否记录每回合日志 */
   verbose: boolean;
   maxRounds?: number;
@@ -348,7 +356,8 @@ export function resolveCombat(
   const enemies: EnemyUnit[] = monsters.map((def) => ({ def, hp: def.hp }));
   let hp = fighter.hp;
   let mp = fighter.mp;
-  let potions = fighter.potions;
+  let potions = options.potion?.count ?? 0;
+  const potion = options.potion;
   let shield = 0;
   let dodgeUp = 0;
   let lifestealBonus = 0;
@@ -361,13 +370,21 @@ export function resolveCombat(
   const aliveEnemies = () => enemies.filter((e) => e.hp > 0);
 
   for (let round = 1; round <= maxRounds; round += 1) {
-    // ---- 用药 ----
-    if (options.autoHeal && hp / stats.hp < options.healThreshold && potions > 0) {
-      const heal = Math.max(60, Math.round(stats.hp * 0.35));
+    // ---- 用药（按比例恢复）----
+    if (options.autoHeal && potion && hp / stats.hp < options.healThreshold && potions > 0) {
+      const heal = Math.round(stats.hp * potion.healPct);
+      const mana = Math.round(stats.mp * potion.manaPct);
       hp = Math.min(stats.hp, hp + heal);
+      mp = Math.min(stats.mp, mp + mana);
       potions -= 1;
       potionsUsed += 1;
-      if (options.verbose) rounds.push(`第 ${round} 回合：你服下一枚丹药，回复 ${heal} 点气血（${hp}/${stats.hp}）。`);
+      if (options.verbose) {
+        rounds.push(
+          `第 ${round} 回合：你服下一枚${potion.name}，回复 ${heal} 点气血${
+            mana > 0 ? `、${mana} 点内力` : ""
+          }（${hp}/${stats.hp}）。`,
+        );
+      }
     } else {
       // ---- 出手 ----
       const skill = chooseSkill({ ...fighter, hp, mp });
@@ -637,9 +654,20 @@ export function questReady(save: SaveGame, questId: string): boolean {
 export function addMaterials(player: Player, gained: Record<string, number>): Player {
   const materials = { ...player.materials };
   for (const [id, count] of Object.entries(gained)) {
+    if (!MATERIAL_MAP[id] || count <= 0) continue;
     materials[id] = (materials[id] ?? 0) + count;
   }
   return { ...player, materials };
+}
+
+/** 药品入账（任务奖励等） */
+export function addPotions(player: Player, gained: Record<string, number>): Player {
+  const potions = { ...player.potions };
+  for (const [id, count] of Object.entries(gained)) {
+    if (!POTIONS[id] || count <= 0) continue;
+    potions[id] = (potions[id] ?? 0) + count;
+  }
+  return { ...player, potions };
 }
 
 export function takeMaterials(player: Player, need: Record<string, number>): Player | null {
@@ -733,6 +761,21 @@ export interface IdleSettleOptions {
   intervalMs?: number;
   /** 经验/银两效率（离线降低，默认 1） */
   efficiency?: number;
+  /** 自动用药（按比例恢复） */
+  potion?: { id: string; name: string; healPct: number; manaPct: number; count: number };
+  /** 是否挑战精英（每场 20% 概率遭遇地图首领） */
+  elite?: boolean;
+}
+
+/** 自动用药选择：优先背包里最便宜的恢复药（气血药） */
+export function pickPotion(player: Player): { id: string; name: string; healPct: number; manaPct: number; count: number } | undefined {
+  const options = Object.entries(player.potions)
+    .filter(([id, count]) => count > 0 && (POTIONS[id]?.healPct ?? 0) > 0)
+    .sort((a, b) => (POTIONS[a[0]]?.price ?? 0) - (POTIONS[b[0]]?.price ?? 0));
+  const best = options[0];
+  if (!best) return undefined;
+  const def = POTIONS[best[0]];
+  return { id: best[0], name: def.name, healPct: def.healPct, manaPct: def.manaPct, count: best[1] };
 }
 
 export interface IdleSettleResult {
@@ -745,6 +788,9 @@ export interface IdleSettleResult {
   drops: EquipItem[];
   materials: Record<string, number>;
   deaths: number;
+  potionsUsed: number;
+  /** 击败过的怪物 id（用于地图解锁判定） */
+  killedIds: string[];
   messages: string[];
 }
 
@@ -760,6 +806,8 @@ export function idleSettle(options: IdleSettleOptions): IdleSettleResult {
     drops: [],
     materials: {},
     deaths: 0,
+    potionsUsed: 0,
+    killedIds: [],
     messages: [],
   };
   if (!map) return empty;
@@ -773,17 +821,23 @@ export function idleSettle(options: IdleSettleOptions): IdleSettleResult {
   let exp = 0;
   let silver = 0;
   let deaths = 0;
+  let potionsUsed = 0;
+  const killedIds = new Set<string>();
   const drops: EquipItem[] = [];
   const materials: Record<string, number> = {};
   const messages: string[] = [];
 
   const pool = map.monsters;
   for (let i = 0; i < battles; i += 1) {
-    const monsterId = pick(pool);
+    const eliteId =
+      options.elite && map.elite && player.hp > totalStats(player).hp * 0.6 && chance(0.2)
+        ? map.elite
+        : null;
+    const monsterId = eliteId ?? pick(pool);
     const monsterLevel = MONSTER_MAP[monsterId]?.level ?? player.level;
     const group = buildMonsterGroup(
       monsterId,
-      monsterGroupSize(monsterLevel, player.level),
+      eliteId ? 1 : monsterGroupSize(monsterLevel, player.level),
     );
     const stats = totalStats(player);
     const fighter: Fighter = {
@@ -793,14 +847,20 @@ export function idleSettle(options: IdleSettleOptions): IdleSettleResult {
       skills: player.skills,
       hp: player.hp,
       mp: player.mp,
-      potions: sumPotions(player),
+      potions: 0,
     };
+    const remaining = (options.potion?.count ?? 0) - potionsUsed;
     const result = resolveCombat(fighter, group, {
-      autoHeal: true,
+      autoHeal: options.potion != null,
       healThreshold: 0.45,
       verbose: false,
+      potion: options.potion && remaining > 0 ? { ...options.potion, count: remaining } : undefined,
     });
-    if (result.win) kills += group.length;
+    if (result.win) {
+      kills += group.length;
+      if (killedIds.size < 20) killedIds.add(monsterId);
+    }
+    potionsUsed += result.potionsUsed;
     exp += Math.round(result.exp * efficiency);
     silver += Math.round(result.silver * efficiency);
     drops.push(...result.drops);
@@ -816,17 +876,32 @@ export function idleSettle(options: IdleSettleOptions): IdleSettleResult {
   }
 
   player = addMaterials({ ...player, silver: player.silver + silver }, materials);
+  if (potionsUsed > 0 && options.potion) {
+    const potions = { ...player.potions };
+    potions[options.potion.id] = Math.max(0, (potions[options.potion.id] ?? 0) - potionsUsed);
+    if (potions[options.potion.id] === 0) delete potions[options.potion.id];
+    player = { ...player, potions };
+    if (deaths > 0) messages.push(`消耗 ${options.potion.name} ×${potionsUsed}。`);
+  }
   const levelResult = grantExp(player, exp);
   player = levelResult.player;
   messages.push(...levelResult.messages);
   if (deaths > 0) messages.push(`挂机途中有 ${deaths} 次力竭，均已就地调息恢复。`);
   if (drops.length > 0) messages.push(`拾得装备 ${drops.length} 件。`);
 
-  return { player, battles, kills, exp, silver, drops, materials, deaths, messages };
-}
-
-function sumPotions(player: Player): number {
-  return Object.values(player.potions).reduce((a, b) => a + b, 0);
+  return {
+    player,
+    battles,
+    kills,
+    exp,
+    silver,
+    drops,
+    materials,
+    deaths,
+    potionsUsed,
+    killedIds: [...killedIds],
+    messages,
+  };
 }
 
 /**
@@ -852,7 +927,11 @@ export function settleOffline(save: SaveGame, now: number): { save: SaveGame; re
     verbose: false,
     intervalMs: OFFLINE_INTERVAL_MS,
     efficiency: OFFLINE_EFFICIENCY,
+    potion: pickPotion(save.player),
+    elite: save.idle.config.fightElite,
   });
+
+  const unlock = unlockMapsByBoss(save.maps, result.killedIds);
 
   const report: IdleReport = {
     minutes: Math.round(elapsed / 60000),
@@ -863,6 +942,7 @@ export function settleOffline(save: SaveGame, now: number): { save: SaveGame; re
     drops: result.drops.map((d) => d.name),
     leveledTo: result.player.level,
     deaths: result.deaths,
+    unlocked: unlock.unlocked,
   };
 
   const player: Player = {
@@ -874,6 +954,7 @@ export function settleOffline(save: SaveGame, now: number): { save: SaveGame; re
     save: {
       ...save,
       player,
+      maps: unlock.maps,
       idle: { ...save.idle, lastTick: now, report },
       stats: {
         ...save.stats,
@@ -989,7 +1070,7 @@ export function skillUpgradeCost(skill: SkillDef, level: number) {
   };
 }
 
-/** 日常任务每日重置：把已完成的日常放回可接取状态 */
+/** 日常任务每日重置：把已完成的日常放回可接取状态，并清空循环任务次数 */
 export function resetDailies(save: SaveGame, today: string): SaveGame {
   if (save.quests.dailyDate === today) return save;
   const isDaily = (id: string) => {
@@ -1007,9 +1088,56 @@ export function resetDailies(save: SaveGame, today: string): SaveGame {
       active: save.quests.active.filter((id) => !isDaily(id)),
       completed: save.quests.completed.filter((id) => !isDaily(id)),
       progress,
+      repeatUsed: {},
       dailyDate: today,
     },
   };
+}
+
+/* ------------------------------ 循环 / 门派任务 ------------------------------ */
+
+export function isRepeatable(questId: string): boolean {
+  const quest = require_quest(questId);
+  if (!quest) return false;
+  return quest.kind === "repeat" || quest.kind === "sect";
+}
+
+/** 循环任务今日剩余可提交次数 */
+export function repeatRemaining(save: SaveGame, questId: string, today: string): number {
+  const quest = require_quest(questId);
+  const limit = quest?.repeatDaily ?? 0;
+  if (limit <= 0) return 0;
+  const record = save.quests.repeatUsed?.[questId];
+  const used = record && record.date === today ? record.used : 0;
+  return Math.max(0, limit - used);
+}
+
+/** 记录一次循环任务提交 */
+export function consumeRepeat(quests: QuestState, questId: string, today: string): QuestState {
+  const repeatUsed = { ...(quests.repeatUsed ?? {}) };
+  const record = repeatUsed[questId];
+  const used = record && record.date === today ? record.used + 1 : 1;
+  repeatUsed[questId] = { date: today, used };
+  return { ...quests, repeatUsed };
+}
+
+/* ------------------------------ 地图解锁（击败地图首领） ------------------------------ */
+
+/** 击败地图首领后解锁下一地区 */
+export function unlockMapsByBoss(
+  maps: string[],
+  defeatedMonsterIds: string[],
+): { maps: string[]; unlocked: string[] } {
+  const unlocked: string[] = [];
+  let next = maps;
+  for (const map of MAPS) {
+    if (!map.boss || !map.unlockNext) continue;
+    if (!defeatedMonsterIds.includes(map.boss)) continue;
+    if (next.includes(map.unlockNext)) continue;
+    next = [...next, map.unlockNext];
+    unlocked.push(map.unlockNext);
+  }
+  return { maps: next, unlocked };
 }
 
 export function emptyIdle(mapId = "qingshi"): IdleState {

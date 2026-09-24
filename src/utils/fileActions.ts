@@ -25,6 +25,9 @@ function utf8Size(text: string): number {
 
 let lastSelfWriteAt = 0;
 
+/** 加密文档提示只在每个会话弹出一次 */
+let encryptedNoticeShown = false;
+
 /** 记录一次由本应用发起的写入，用于忽略监听器回传的自身事件 */
 export function markSelfWrite(): void {
   lastSelfWriteAt = Date.now();
@@ -114,7 +117,7 @@ export async function openPath(path: string): Promise<boolean> {
 
   try {
     const payload = await invoke<FilePayload>("read_markdown_file", { path });
-    if (payload.size > LARGE_FILE_BYTES) {
+    if (!payload.encrypted && payload.size > LARGE_FILE_BYTES) {
       const ok = await askConfirm({
         title: "文件较大",
         message: `「${fileName(payload.path)}」大小为 ${formatBytes(
@@ -131,6 +134,15 @@ export async function openPath(path: string): Promise<boolean> {
     }
     void addRecentFile(payload.path);
     void watchFile(payload.path);
+    // 加密文档：打开后再提示（每个会话仅一次），不阻塞文档展示
+    if (payload.encrypted && !encryptedNoticeShown) {
+      encryptedNoticeShown = true;
+      void showMessage(
+        "已解密打开",
+        `检测到企业加密文档「${fileName(payload.path)}」，已自动解密打开，可正常编辑。\n\n` +
+          "保存（Ctrl+S）时会自动按原加密格式写回，不会破坏加密状态。",
+      );
+    }
     return true;
   } catch (error) {
     await showMessage("打开失败", `无法打开文件：\n${path}\n\n${String(error)}`);
@@ -196,13 +208,15 @@ export async function saveDoc(id: string): Promise<boolean> {
     const modifiedAt = await invoke<number>("write_markdown_file", {
       path: doc.filePath,
       content: doc.content,
+      encryptedHeader: doc.encryptedHeader,
     });
     markSelfWrite();
     useAppStore.getState().patchDoc(id, {
       savedContent: doc.content,
       isDirty: false,
       modifiedAt,
-      size: utf8Size(doc.content),
+      // 加密文档落盘后会多出 4096 字节文件头
+      size: (doc.encrypted ? 4096 : 0) + utf8Size(doc.content),
     });
     void addRecentFile(doc.filePath);
     return true;
@@ -224,6 +238,7 @@ export async function saveDocAs(id: string): Promise<boolean> {
     const modifiedAt = await invoke<number>("write_markdown_file", {
       path: target,
       content: doc.content,
+      encryptedHeader: doc.encryptedHeader,
     });
     markSelfWrite();
     const oldPath = doc.filePath;
@@ -232,8 +247,9 @@ export async function saveDocAs(id: string): Promise<boolean> {
       savedContent: doc.content,
       isDirty: false,
       readOnly: false,
+      // 加密文档另存为后仍是加密文档（沿用原文件头）
+      size: (doc.encrypted ? 4096 : 0) + utf8Size(doc.content),
       modifiedAt,
-      size: utf8Size(doc.content),
     });
     if (oldPath && !samePath(oldPath, target)) void unwatchFile(oldPath);
     void addRecentFile(target);
@@ -294,10 +310,13 @@ export async function reloadDocFromDisk(id: string): Promise<boolean> {
     const payload = await invoke<FilePayload>("read_markdown_file", {
       path: doc.filePath,
     });
+    const encrypted = payload.encrypted ?? false;
     useAppStore.getState().patchDoc(id, {
       content: payload.content,
       savedContent: payload.content,
       isDirty: false,
+      encrypted,
+      encryptedHeader: payload.encryptedHeader ?? null,
       readOnly: payload.size > LARGE_FILE_BYTES,
       modifiedAt: payload.modifiedAt,
       size: payload.size,

@@ -20,14 +20,19 @@ import {
   SKILL_MAP,
 } from "../data";
 import {
+  enhanceCost,
   enhancedStats,
   itemScore,
+  questNeed,
   questProgress,
+  questReady,
   realmOf,
+  repeatRemaining,
+  skillUpgradeCost,
   statsMarkdown,
   totalStats,
 } from "../engine";
-import type { EquipItem, QuestDef, SaveGame, SectId } from "../types";
+import type { BattleBrief, EquipItem, EquipSlot, QuestDef, SaveGame, SectId } from "../types";
 
 /** 字符进度条 */
 export function bar(current: number, max: number, length = 10): string {
@@ -71,17 +76,23 @@ export function characterCard(save: SaveGame): string {
 
 /** 地图面板 */
 export function mapPanel(save: SaveGame, selectedMap: string): string {
-  const lines = ["### 江湖地图", "", "> 选择一处地方探索，等级不足的区域无法进入。", ""];
+  const lines = ["### 江湖地图", "", "> 每个地区都有一名**首领**，击败它才能前往下一区域。", ""];
   lines.push("| 区域 | 建议等级 | 状态 | 说明 |");
   lines.push("| --- | --- | --- | --- |");
   for (const map of MAPS) {
     const unlocked = save.maps.includes(map.id) || map.id === "qingshi";
     const current = map.id === selectedMap ? "==当前==" : "";
+    const boss = map.boss ? MONSTER_MAP[map.boss] : undefined;
+    const gate =
+      map.unlockNext && boss
+        ? `击败 ${boss.name} 解锁${MAP_BY_ID[map.unlockNext]?.name ?? map.unlockNext}`
+        : "终点区域";
     lines.push(
       `| ${unlocked ? "" : "🔒 "}${map.name} ${current} | ${map.recommend[0]}–${map.recommend[1]} | ${
         unlocked ? (save.player.level >= map.minLevel ? "可前往" : `需 ${map.minLevel} 级`) : "未解锁"
       } | ${map.desc} |`,
     );
+    lines.push(`| 　└ 首领 |  |  | ${boss ? `${boss.name} — ${gate}` : "—"} |`);
   }
   const map = MAP_BY_ID[selectedMap];
   if (map) {
@@ -90,15 +101,19 @@ export function mapPanel(save: SaveGame, selectedMap: string): string {
     for (const id of map.monsters) {
       const m = MONSTER_MAP[id];
       if (!m) continue;
-      if (save.player.level >= m.level + 8) {
-        lines.push(`- [x] ${m.name}（${m.level} 级）· 已被你视作等闲`);
+      if (save.player.level >= m.level + 10) {
+        lines.push(`- [x] ${m.name}（${m.level} 级）· 等级压制：**经验与银两为 0**`);
+      } else if (save.player.level >= m.level + 5) {
+        lines.push(`- [x] ${m.name}（${m.level} 级）· 收益已大幅衰减`);
       } else {
         lines.push(`- [ ] ${m.name}（${m.level} 级）· ${m.desc}`);
       }
     }
     if (map.elite) {
       const elite = MONSTER_MAP[map.elite];
-      if (elite) lines.push("", `> [!WARNING] 精英：**${elite.name}**（${elite.level} 级）— ${elite.desc}`);
+      if (elite) {
+        lines.push("", `> [!WARNING] 精英：**${elite.name}**（${elite.level} 级）— ${elite.desc}`);
+      }
     }
     if (map.dungeon) {
       lines.push("", `> [!NOTE] 秘境：${DUNGEON_MAP[map.dungeon]?.name ?? ""}（可从「秘境」页进入）`);
@@ -111,30 +126,64 @@ export function mapPanel(save: SaveGame, selectedMap: string): string {
   return lines.join("\n");
 }
 
-/** 战斗记录 */
-export function battlePanel(save: SaveGame, log: string[]): string {
-  const map = MAP_BY_ID[save.idle.config.mapId];
-  const battleMap = MAP_BY_ID[save.idle.config.mapId] ?? MAP_BY_ID.qingshi;
-  const recommend = battleMap?.recommend;
-  const gap =
-    recommend && save.player.level < recommend[0]
-      ? "> [!WARNING] 此地怪物等级高于你，收益更高但风险也更大。"
-      : recommend && save.player.level > recommend[1] + 5
-        ? "> [!TIP] 此地怪物已远低于你的境界，经验与银两大幅衰减（材料照常掉落），建议换更高级的区域。"
-        : "";
-  return [
+/** 战斗记录：只显示本次战斗过程 + 近期战绩 */
+export function battlePanel(
+  save: SaveGame,
+  battle: { title: string; rounds: string[]; drops: EquipItem[]; win: boolean; died: boolean } | null,
+  recent: BattleBrief[],
+): string {
+  const map = MAP_BY_ID[save.idle.config.mapId] ?? MAP_BY_ID.qingshi;
+  const recommend = map?.recommend;
+  const lines: string[] = [
     "### 战斗",
     "",
     `当前所在：**${map?.name ?? "青石镇"}**　累计出战 **${num(save.stats.battles)}** 场　击败 **${num(
       save.stats.kills,
     )}** 名敌人　力竭 **${num(save.stats.deaths)}** 次`,
-    "",
-    gap,
-    gap ? "" : undefined,
-    log.length > 0 ? log.join("\n\n") : "> 还没有战斗记录。点击下方按钮开始挑战。",
-  ]
-    .filter((line) => line !== undefined)
-    .join("\n");
+  ];
+  if (recommend) {
+    if (save.player.level > recommend[1] + 5) {
+      lines.push(
+        "",
+        "> [!WARNING] 此地怪物已远低于你的境界，**经验与银两为 0**（材料与装备照常掉落），请前往更高级的区域。",
+      );
+    } else if (save.player.level < recommend[0]) {
+      lines.push("", "> [!WARNING] 此地怪物等级高于你，收益更高但风险也更大。");
+    }
+  }
+
+  lines.push("", "#### 本次战斗", "");
+  if (battle) {
+    lines.push(...battle.rounds);
+    if (battle.drops.length > 0) {
+      lines.push(
+        "",
+        `**掉落**：${battle.drops
+          .map((d) => `${QUALITY_META[d.quality].mark} ${d.name}（评分 ${itemScore(d)}）`)
+          .join("、")}`,
+      );
+    }
+  } else {
+    lines.push("> 还没有战斗记录。点击下方按钮开始挑战。");
+  }
+
+  lines.push("", "#### 近期战绩", "");
+  if (recent.length === 0) {
+    lines.push("> 暂无。");
+  } else {
+    lines.push("| 时间 | 结果 | 对手 | 经验 | 银两 | 掉落 |", "| --- | --- | --- | --- | --- | --- |");
+    for (const item of recent) {
+      const time = new Date(item.at).toLocaleTimeString();
+      lines.push(
+        `| ${time} | ${item.died ? "力竭" : item.win ? "胜" : "败"} | ${item.monster}${
+          item.count > 1 ? ` ×${item.count}` : ""
+        } | ${num(item.exp)} | ${num(item.silver)} | ${
+          item.drops.length > 0 ? item.drops.join("、") : "—"
+        } |`,
+      );
+    }
+  }
+  return lines.join("\n");
 }
 
 /** 装备行描述 */
@@ -154,10 +203,10 @@ function equipLine(item: EquipItem, equipped: boolean): string {
   }　${parts.join(" ")}　评分 ${itemScore(item)}`;
 }
 
-/** 背包 / 装备面板 */
-export function bagPanel(save: SaveGame): string {
+/** 背包 / 装备面板（含按部位的详情对比） */
+export function bagPanel(save: SaveGame, selectedSlot: EquipSlot): string {
   const p = save.player;
-  const slotNames: Record<string, string> = {
+  const slotNames: Record<EquipSlot, string> = {
     weapon: "武器",
     head: "头部",
     body: "衣甲",
@@ -166,9 +215,43 @@ export function bagPanel(save: SaveGame): string {
     accessory: "饰品",
   };
   const lines: string[] = ["### 装备", "", "| 部位 | 装备 |", "| --- | --- |"];
-  for (const [slot, name] of Object.entries(slotNames)) {
-    const item = p.equipment[slot as keyof typeof p.equipment];
-    lines.push(`| ${name} | ${item ? equipLine(item, true) : "—"} |`);
+  for (const [slot, name] of Object.entries(slotNames) as Array<[EquipSlot, string]>) {
+    const item = p.equipment[slot];
+    lines.push(
+      `| ${slot === selectedSlot ? `**${name}** ▸` : name} | ${item ? equipLine(item, true) : "—"} |`,
+    );
+  }
+
+  // 选中部位的详情对比
+  const equipped = p.equipment[selectedSlot];
+  const candidates = [...p.inventory]
+    .filter((i) => i.slot === selectedSlot)
+    .sort((a, b) => itemScore(b) - itemScore(a));
+  const best = candidates[0];
+  lines.push(
+    "",
+    `#### ${slotNames[selectedSlot]} · 详情对比`,
+    "",
+    `- 当前装备：${equipped ? equipLine(equipped, false) : "（空）"}`,
+  );
+  if (best) {
+    const diff = itemScore(best) - (equipped ? itemScore(equipped) : 0);
+    lines.push(
+      `- 背包最优：${equipLine(best, false)}　**${
+        diff > 0 ? `优于当前 +${diff}` : diff < 0 ? `弱于当前 ${Math.abs(diff)}` : "与当前持平"
+      }**`,
+    );
+    if (candidates.length > 1) {
+      lines.push(`- 同部位备选：共 ${candidates.length} 件`);
+    }
+  } else {
+    lines.push("- 背包中暂无该部位装备");
+  }
+  if (equipped) {
+    lines.push(
+      "",
+      `> 强化当前装备需银两 ${num(enhanceCost(equipped).silver)}、锻造材料 ${enhanceCost(equipped).iron} 个（当前 +${equipped.enhance}/10）`,
+    );
   }
 
   lines.push("", `### 背包（${p.inventory.length}/200）`, "");
@@ -205,9 +288,7 @@ export function bagPanel(save: SaveGame): string {
   lines.push("| 药品 | 数量 | 效果 | 单价 |", "| --- | --- | --- | --- |");
   for (const [id, potion] of Object.entries(POTIONS)) {
     lines.push(
-      `| ${potion.name} | ${p.potions[id] ?? 0} | ${
-        potion.heal > 0 ? `回复 ${potion.heal} 气血` : `回复 ${potion.mana} 内力`
-      } | ${potion.price} |`,
+      `| ${potion.name} | ${p.potions[id] ?? 0} | ${potion.desc} | ${potion.price} |`,
     );
   }
   return lines.join("\n");
@@ -216,6 +297,8 @@ export function bagPanel(save: SaveGame): string {
 /** 武学面板 */
 export function skillPanel(save: SaveGame): string {
   const p = save.player;
+  const expLine = `当前修为（经验）**${num(p.exp)}**　银两 **${num(p.silver)}**　门派贡献 **${num(p.contribution)}**`;
+  const expTip = "> [!TIP] 修为即人物经验：战斗、挂机、任务与秘境都会获得，用于学习与提升武学。";
   if (!p.sect) {
     return [
       "### 武学",
@@ -223,7 +306,9 @@ export function skillPanel(save: SaveGame): string {
       "> [!WARNING] 你尚未拜入任何门派。",
       "> 到「门派」页选择一门武学，才能学习招式与绝学。",
       "",
-      `当前等级 **${p.level}**，银两 **${num(p.silver)}**。`,
+      expLine,
+      "",
+      expTip,
     ].join("\n");
   }
   const sect = SECT_BY_ID[p.sect];
@@ -232,6 +317,10 @@ export function skillPanel(save: SaveGame): string {
     "",
     `> ${sect?.motto ?? ""}`,
     "",
+    expLine,
+    "",
+    expTip,
+    "",
     "| 武学 | 层级 | 状态 | 效果 | 消耗 |",
     "| --- | --- | --- | --- | --- |",
   ];
@@ -239,9 +328,10 @@ export function skillPanel(save: SaveGame): string {
     const skill = SKILL_MAP[skillId];
     if (!skill) continue;
     const level = p.skills[skillId] ?? 0;
+    const upgrade = skillUpgradeCost(skill, Math.max(1, level));
     const status =
       level > 0
-        ? `**${level} 层**`
+        ? `**${level} 层**（升层：银两 ${num(upgrade.silver)} · 贡献 ${upgrade.contribution} · 修为 ${num(upgrade.exp)}）`
         : p.level < skill.reqLevel
           ? `需 ${skill.reqLevel} 级`
           : skill.reqSkill && !p.skills[skill.reqSkill]
@@ -256,51 +346,84 @@ export function skillPanel(save: SaveGame): string {
   return lines.join("\n");
 }
 
-/** 任务面板 */
-export function questPanel(save: SaveGame): string {
+/** 任务面板：分组显示可交付 / 进行中 / 可接取 */
+export function questPanel(save: SaveGame, today: string, offerable: QuestDef[]): string {
   const lines: string[] = ["### 任务", ""];
-  const active = save.quests.active;
-  if (active.length === 0) lines.push("> 暂无进行中的任务。");
-  else {
-    lines.push("**进行中**", "");
-    for (const id of active) {
-      const quest = QUEST_MAP[id];
-      if (!quest) continue;
-      const need =
-        quest.objective.type === "level"
-          ? quest.objective.level
-          : quest.objective.type === "dungeon"
-            ? 1
-            : quest.objective.count;
-      const done = questProgress(save, id);
-      const progress = Math.min(done, need);
-      const badge = progress >= need ? " ✅ **可交付**" : "";
-      lines.push(
-        `- [${progress >= need ? "x" : " "}] **${quest.title}**${quest.chapter ? `（第 ${quest.chapter} 章）` : ""}${badge}`,
-      );
-      lines.push(`  - 委托人：${quest.giver}`);
-      lines.push(
-        `  - 目标：${objectiveText(quest)}　进度 \`${bar(progress, need, 8)}\``,
-      );
-      lines.push(
-        `  - 奖励：经验 ${num(quest.reward.exp)} · 银两 ${num(quest.reward.silver)}${
-          quest.reward.contribution ? ` · 贡献 ${quest.reward.contribution}` : ""
-        }${quest.reward.equip ? ` · ${QUALITY_META[quest.reward.equip].name}装备` : ""}`,
-      );
-      if (quest.story.length > 0) {
-        lines.push(`  - 剧情：> ${quest.story[0]}`);
-      }
+  const active = save.quests.active
+    .map((id) => QUEST_MAP[id])
+    .filter((q): q is QuestDef => Boolean(q));
+  const ready = active.filter((q) => questReady(save, q.id));
+  const ongoing = active.filter((q) => !questReady(save, q.id));
+
+  if (ready.length > 0) {
+    lines.push(`**可交付（${ready.length}）**`, "");
+    for (const quest of ready) {
+      lines.push(`- [x] **${quest.title}**${quest.chapter ? `（第 ${quest.chapter} 章）` : ""} ✅`);
+      lines.push(`  - 委托人：${quest.giver}　目标：${objectiveText(quest)}`);
+      lines.push(`  - 奖励：${rewardText(quest)}`);
+    }
+    lines.push("");
+  }
+
+  lines.push(`**进行中（${ongoing.length}）**`, "");
+  if (ongoing.length === 0) lines.push("> 暂无进行中的任务。");
+  for (const quest of ongoing) {
+    const need = questNeed(quest.id);
+    const done = Math.min(questProgress(save, quest.id), need);
+    const kindLabel = KIND_LABEL[quest.kind] ?? "";
+    const repeat =
+      quest.repeatDaily != null
+        ? `　今日剩余 **${repeatRemaining(save, quest.id, today)}/${quest.repeatDaily}**`
+        : "";
+    lines.push(
+      `- [ ] **${quest.title}**（${kindLabel}${quest.chapter ? ` 第 ${quest.chapter} 章` : ""}）`,
+    );
+    lines.push(`  - 委托人：${quest.giver}${repeat}`);
+    lines.push(`  - 目标：${objectiveText(quest)}　进度 \`${bar(done, need, 8)}\``);
+    lines.push(`  - 奖励：${rewardText(quest)}`);
+    if (quest.story.length > 0) lines.push(`  - 剧情：> ${quest.story[0]}`);
+  }
+
+  if (offerable.length > 0) {
+    lines.push("", `**可接取（${offerable.length}）**`, "");
+    for (const quest of offerable) {
+      const repeat = quest.repeatDaily != null ? `（每日 ${quest.repeatDaily} 次）` : "";
+      lines.push(`- ${KIND_LABEL[quest.kind] ?? ""} **${quest.title}**${repeat}　委托人：${quest.giver}`);
+      lines.push(`  - 目标：${objectiveText(quest)}　奖励：${rewardText(quest)}`);
     }
   }
 
   const completed = save.quests.completed;
   if (completed.length > 0) {
     lines.push("", `**已完成（${completed.length}）**`, "");
-    lines.push(
-      completed.map((id) => `\`${QUEST_MAP[id]?.title ?? id}\``).join("　"),
-    );
+    lines.push(completed.map((id) => `\`${QUEST_MAP[id]?.title ?? id}\``).join("　"));
   }
   return lines.join("\n");
+}
+
+const KIND_LABEL: Record<string, string> = {
+  main: "主线",
+  side: "支线",
+  daily: "日常",
+  repeat: "循环",
+  sect: "门派",
+};
+
+function rewardText(quest: QuestDef): string {
+  const parts = [`经验 ${num(quest.reward.exp)}`, `银两 ${num(quest.reward.silver)}`];
+  if (quest.reward.contribution) parts.push(`贡献 ${quest.reward.contribution}`);
+  if (quest.reward.equip) parts.push(`${QUALITY_META[quest.reward.equip].name}装备`);
+  if (quest.reward.potions?.length) {
+    parts.push(
+      quest.reward.potions.map((p) => `${POTIONS[p.id]?.name ?? p.id}×${p.count}`).join("、"),
+    );
+  }
+  if (quest.reward.materials?.length) {
+    parts.push(
+      quest.reward.materials.map((m) => `${MATERIAL_MAP[m.id]?.name ?? m.id}×${m.count}`).join("、"),
+    );
+  }
+  return parts.join(" · ");
 }
 
 function objectiveText(quest: QuestDef): string {

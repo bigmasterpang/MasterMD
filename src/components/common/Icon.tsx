@@ -45,6 +45,7 @@ export type IconName =
   | "case-sensitive"
   | "keyboard"
   | "sword"
+  | "key"
   | "replace"
   | "arrow-up-down"
   | "info"
@@ -204,6 +205,12 @@ const PATHS: Record<IconName, string[]> = {
     "M16 16l4 4",
     "M19 21l2-2",
     "M6.5 6.5l2-2",
+  ],
+  key: [
+    "M21 2l-2 2",
+    "M15.5 8.5 19 5",
+    "M11.39 11.61a5.5 5.5 0 1 1-7.78 7.78 5.5 5.5 0 0 1 7.78-7.78z",
+    "M11.39 11.61 15.5 8.5",
   ],
 };
 

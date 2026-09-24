@@ -12,11 +12,12 @@ import {
   questProgress,
   questReady,
   realmOf,
+  repeatRemaining,
   totalStats,
 } from "../engine";
 import { todayKey } from "../save";
 import { offerableQuests, useWuxiaStore, type WuxiaTab } from "../store";
-import type { Quality } from "../types";
+import type { EquipSlot, Quality } from "../types";
 import {
   bagPanel,
   battlePanel,
@@ -39,12 +40,21 @@ function MarkdownBlock({ source, className }: { source: string; className?: stri
 const TABS: Array<{ id: WuxiaTab; label: string }> = [
   { id: "map", label: "地图" },
   { id: "battle", label: "战斗" },
-  { id: "bag", label: "背包" },
+  { id: "bag", label: "装备" },
   { id: "skill", label: "武学" },
   { id: "quest", label: "任务" },
   { id: "sect", label: "门派" },
   { id: "dungeon", label: "秘境" },
   { id: "idle", label: "挂机" },
+];
+
+const SLOTS: Array<{ id: EquipSlot; label: string }> = [
+  { id: "weapon", label: "武器" },
+  { id: "head", label: "头部" },
+  { id: "body", label: "衣甲" },
+  { id: "hands", label: "手部" },
+  { id: "feet", label: "足部" },
+  { id: "accessory", label: "饰品" },
 ];
 
 function SmallButton({
@@ -95,9 +105,11 @@ export function WuxiaPanel() {
   const save = useWuxiaStore((s) => s.save);
   const tab = useWuxiaStore((s) => s.tab);
   const selectedMap = useWuxiaStore((s) => s.selectedMap);
-  const battleLog = useWuxiaStore((s) => s.battleLog);
+  const battle = useWuxiaStore((s) => s.battle);
+  const recentBattles = useWuxiaStore((s) => s.recentBattles);
   const toast = useWuxiaStore((s) => s.toast);
   const [selectedUid, setSelectedUid] = useState<string>("");
+  const [selectedSlot, setSelectedSlot] = useState<EquipSlot>("weapon");
   const [sellQuality, setSellQuality] = useState<Quality>("common");
   const [protectUpgrades, setProtectUpgrades] = useState(false);
 
@@ -111,28 +123,31 @@ export function WuxiaPanel() {
     return () => window.clearTimeout(timer);
   }, [toast]);
 
+  const today = todayKey();
+  const offerable = useMemo(() => offerableQuests(save), [save]);
+
   const markdown = useMemo(() => {
     switch (tab) {
       case "map":
         return mapPanel(save, selectedMap);
       case "battle":
-        return battlePanel(save, battleLog);
+        return battlePanel(save, battle, recentBattles);
       case "bag":
-        return bagPanel(save);
+        return bagPanel(save, selectedSlot);
       case "skill":
         return skillPanel(save);
       case "quest":
-        return questPanel(save);
+        return questPanel(save, today, offerable);
       case "sect":
         return sectPanel(save);
       case "dungeon":
-        return dungeonPanel(save, todayKey());
+        return dungeonPanel(save, today);
       case "idle":
         return idlePanel(save);
       default:
         return "";
     }
-  }, [tab, save, selectedMap, battleLog]);
+  }, [tab, save, selectedMap, battle, recentBattles, selectedSlot, today, offerable]);
 
   const map = MAPS.find((m) => m.id === selectedMap);
   const canEnterMap =
@@ -147,10 +162,11 @@ export function WuxiaPanel() {
   );
   const inventoryItem =
     sortedInventory.find((i) => i.uid === selectedUid) ?? sortedInventory[0] ?? null;
+  const equippedSlotItem = save.player.equipment[selectedSlot];
   const readyQuests = save.quests.active.filter((id) => questReady(save, id));
   const dungeonRemain = Object.values(DUNGEON_MAP).reduce((sum, d) => {
     const record = save.dungeonDaily[d.id];
-    const used = record && record.date === todayKey() ? record.used : 0;
+    const used = record && record.date === today ? record.used : 0;
     return sum + Math.max(0, d.dailyLimit - used);
   }, 0);
 
@@ -170,14 +186,9 @@ export function WuxiaPanel() {
         </span>
         <span className="text-[11px] text-faint">{save.title}</span>
         <span className="mx-1 h-4 w-px bg-line" />
-        <StatChip
-          label="气血"
-          value={`${Math.round(save.player.hp)}/${Math.round(stats.hp)}`}
-        />
-        <StatChip
-          label="内力"
-          value={`${Math.round(save.player.mp)}/${Math.round(stats.mp)}`}
-        />
+        <StatChip label="气血" value={`${Math.round(save.player.hp)}/${Math.round(stats.hp)}`} />
+        <StatChip label="内力" value={`${Math.round(save.player.mp)}/${Math.round(stats.mp)}`} />
+        <StatChip label="修为" value={Math.round(save.player.exp).toLocaleString()} hint="修为即经验，用于学习与提升武学" />
         <StatChip label="银两" value={Math.round(save.player.silver).toLocaleString()} />
         <StatChip label="贡献" value={Math.round(save.player.contribution).toLocaleString()} />
         <StatChip
@@ -289,16 +300,16 @@ export function WuxiaPanel() {
                   <SmallButton
                     disabled={!canEnterMap || !map?.elite}
                     onClick={() => useWuxiaStore.getState().fight(true)}
-                    title="精英怪更强，掉落更好"
+                    title="精英（地图首领）：掉落更好，击败首领可解锁下一区域"
                   >
-                    挑战精英
+                    挑战首领/精英
                   </SmallButton>
                   <SmallButton
                     disabled={!canEnterMap}
                     onClick={() => {
                       for (let i = 0; i < 10; i += 1) useWuxiaStore.getState().fight(false);
                     }}
-                    title="连续挑战 10 次"
+                    title="连续挑战 10 次（只保留最后一次过程）"
                   >
                     连战 10 场
                   </SmallButton>
@@ -315,9 +326,46 @@ export function WuxiaPanel() {
               {tab === "bag" ? (
                 <>
                   <select
+                    value={selectedSlot}
+                    onChange={(event) => setSelectedSlot(event.target.value as EquipSlot)}
+                    className="h-7 rounded-md border border-line bg-input px-2 text-[12px] text-fg"
+                    title="选择要管理的部位"
+                  >
+                    {SLOTS.map((slot) => (
+                      <option key={slot.id} value={slot.id}>
+                        {slot.label}
+                      </option>
+                    ))}
+                  </select>
+                  <SmallButton
+                    tone="primary"
+                    onClick={() => useWuxiaStore.getState().equipBestSlot(selectedSlot)}
+                    title="该部位自动换上背包中评分最高的一件"
+                  >
+                    更换最优
+                  </SmallButton>
+                  <SmallButton
+                    disabled={!equippedSlotItem}
+                    onClick={() => equippedSlotItem && useWuxiaStore.getState().enhance(equippedSlotItem.uid)}
+                    title="强化该部位当前装备（消耗银两与锻造材料）"
+                  >
+                    强化该部位
+                  </SmallButton>
+                  <SmallButton
+                    disabled={!equippedSlotItem}
+                    onClick={() => useWuxiaStore.getState().unequip(selectedSlot)}
+                  >
+                    卸下
+                  </SmallButton>
+                  <SmallButton tone="primary" onClick={() => useWuxiaStore.getState().equipBest()}>
+                    一键全身换装
+                  </SmallButton>
+                  <span className="mx-1 h-4 w-px bg-line" />
+                  <select
                     value={inventoryItem?.uid ?? ""}
                     onChange={(event) => setSelectedUid(event.target.value)}
-                    className="h-7 max-w-[360px] rounded-md border border-line bg-input px-2 text-[12px] text-fg"
+                    className="h-7 max-w-[300px] rounded-md border border-line bg-input px-2 text-[12px] text-fg"
+                    title="背包中的单件装备操作"
                   >
                     {sortedInventory.length === 0 ? <option value="">背包为空</option> : null}
                     {sortedInventory.map((item) => (
@@ -327,23 +375,14 @@ export function WuxiaPanel() {
                     ))}
                   </select>
                   <SmallButton
-                    tone="primary"
                     disabled={!inventoryItem}
                     onClick={() => inventoryItem && useWuxiaStore.getState().equip(inventoryItem.uid)}
                   >
                     装备
                   </SmallButton>
                   <SmallButton
-                    tone="primary"
-                    onClick={() => useWuxiaStore.getState().equipBest()}
-                    title="每个部位自动换上背包中最强的一件"
-                  >
-                    一键装备
-                  </SmallButton>
-                  <SmallButton
                     disabled={!inventoryItem}
                     onClick={() => inventoryItem && useWuxiaStore.getState().enhance(inventoryItem.uid)}
-                    title="消耗银两与锻造材料，+1~+10，每级 +6% 属性"
                   >
                     强化
                   </SmallButton>
@@ -379,51 +418,56 @@ export function WuxiaPanel() {
                   >
                     保留每部位最优：{protectUpgrades ? "开" : "关"}
                   </SmallButton>
-                  <span className="mx-1 h-4 w-px bg-line" />
-                  {Object.entries(POTIONS).map(([id, potion]) => (
-                    <SmallButton
-                      key={id}
-                      onClick={() => useWuxiaStore.getState().buyPotion(id, 5)}
-                      title={`每瓶 ${potion.price} 两，一次买 5 瓶`}
-                    >
-                      买 {potion.name} ×5
-                    </SmallButton>
-                  ))}
-                  <SmallButton onClick={() => useWuxiaStore.getState().usePotion("jinchuang")}>
-                    服金创药
-                  </SmallButton>
                 </>
               ) : null}
 
-              {tab === "skill" && save.player.sect
-                ? Object.values(SKILL_MAP)
-                    .filter((skill) => skill.sect === save.player.sect)
-                    .map((skill) => {
-                      const level = save.player.skills[skill.id] ?? 0;
-                      return (
-                        <SmallButton
-                          key={skill.id}
-                          tone={level > 0 ? "default" : "primary"}
-                          title={`${skill.desc}｜消耗：银两 ${skill.cost.silver} · 贡献 ${skill.cost.contribution} · 修为 ${skill.cost.exp}`}
-                          onClick={() =>
-                            level > 0
-                              ? useWuxiaStore.getState().upgradeSkill(skill.id)
-                              : useWuxiaStore.getState().learnSkill(skill.id)
-                          }
-                        >
-                          {level > 0 ? `${skill.name} ↑${level}` : `学习 ${skill.name}`}
-                        </SmallButton>
-                      );
-                    })
-                : null}
+              {tab === "skill" ? (
+                <>
+                  {save.player.sect
+                    ? Object.values(SKILL_MAP)
+                        .filter((skill) => skill.sect === save.player.sect)
+                        .map((skill) => {
+                          const level = save.player.skills[skill.id] ?? 0;
+                          return (
+                            <SmallButton
+                              key={skill.id}
+                              tone={level > 0 ? "default" : "primary"}
+                              title={`${skill.desc}｜消耗：银两 ${skill.cost.silver} · 贡献 ${skill.cost.contribution} · 修为 ${skill.cost.exp}`}
+                              onClick={() =>
+                                level > 0
+                                  ? useWuxiaStore.getState().upgradeSkill(skill.id)
+                                  : useWuxiaStore.getState().learnSkill(skill.id)
+                              }
+                            >
+                              {level > 0 ? `${skill.name} ↑${level}` : `学习 ${skill.name}`}
+                            </SmallButton>
+                          );
+                        })
+                    : null}
+                  <span className="mx-1 h-4 w-px bg-line" />
+                  <span className="text-[11px] text-faint">
+                    修为（经验）来源：战斗、挂机、任务、秘境　当前 {Math.round(save.player.exp).toLocaleString()}
+                  </span>
+                </>
+              ) : null}
 
               {tab === "quest" ? (
                 <>
+                  <SmallButton
+                    tone={save.autoAccept ? "primary" : "default"}
+                    onClick={() => useWuxiaStore.getState().setAutoAccept(!save.autoAccept)}
+                    title="开启后，可接取的任务会在战斗/挂机时自动接下"
+                  >
+                    自动接取：{save.autoAccept ? "开" : "关"}
+                  </SmallButton>
+                  <span className="mx-1 h-4 w-px bg-line" />
                   {save.quests.active.map((id) => {
                     const quest = QUEST_MAP[id];
                     if (!quest) return null;
                     const ready = questReady(save, id);
                     const progress = Math.min(questProgress(save, id), questNeed(id));
+                    const left =
+                      quest.repeatDaily != null ? repeatRemaining(save, id, today) : undefined;
                     return (
                       <SmallButton
                         key={id}
@@ -436,18 +480,10 @@ export function WuxiaPanel() {
                         onClick={() => useWuxiaStore.getState().claimQuest(id)}
                       >
                         {ready ? "交付" : `进行中 ${progress}/${questNeed(id)}`}「{quest.title}」
+                        {left !== undefined ? ` ${left} 次` : ""}
                       </SmallButton>
                     );
                   })}
-                  {offerableQuests(save).map((quest) => (
-                    <SmallButton
-                      key={quest.id}
-                      title={quest.story[0] ?? ""}
-                      onClick={() => useWuxiaStore.getState().acceptQuest(quest.id)}
-                    >
-                      接取「{quest.title}」
-                    </SmallButton>
-                  ))}
                 </>
               ) : null}
 
@@ -530,6 +566,22 @@ export function WuxiaPanel() {
                           ...save,
                           idle: {
                             ...save.idle,
+                            config: { ...save.idle.config, fightElite: !save.idle.config.fightElite },
+                          },
+                        },
+                      })
+                    }
+                    title="开启后挂机时有 20% 概率遭遇地图首领/精英"
+                  >
+                    挑战首领：{save.idle.config.fightElite ? "开" : "关"}
+                  </SmallButton>
+                  <SmallButton
+                    onClick={() =>
+                      useWuxiaStore.setState({
+                        save: {
+                          ...save,
+                          idle: {
+                            ...save.idle,
                             config: { ...save.idle.config, collectCommon: !save.idle.config.collectCommon },
                           },
                         },
@@ -537,6 +589,27 @@ export function WuxiaPanel() {
                     }
                   >
                     拾取凡品：{save.idle.config.collectCommon ? "开" : "关"}
+                  </SmallButton>
+                </>
+              ) : null}
+
+              {tab === "bag" ? (
+                <>
+                  <span className="mx-1 h-4 w-px bg-line" />
+                  {Object.entries(POTIONS).map(([id, potion]) => (
+                    <SmallButton
+                      key={id}
+                      onClick={() => useWuxiaStore.getState().buyPotion(id, 5)}
+                      title={`${potion.desc}｜每瓶 ${potion.price} 两，一次买 5 瓶`}
+                    >
+                      买 {potion.name} ×5
+                    </SmallButton>
+                  ))}
+                  <SmallButton
+                    onClick={() => useWuxiaStore.getState().usePotion("jinchuang")}
+                    title="按当前气血上限的 30% 恢复"
+                  >
+                    服金创药
                   </SmallButton>
                 </>
               ) : null}
@@ -585,4 +658,3 @@ function MapSelect({
     </select>
   );
 }
-

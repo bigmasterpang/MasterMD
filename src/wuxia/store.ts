@@ -12,25 +12,29 @@ import {
   SKILL_MAP,
   SKILLS,
 } from "./data";
+import { EQUIP_SLOTS } from "./engine";
 import {
   IDLE_INTERVAL_MS,
   addMaterials,
+  addPotions,
   autoEquipBest,
   buildMonsterGroup,
   canLearnSkill,
   checkAchievements,
   clamp,
+  consumeRepeat,
   dungeonAvailable,
-  EQUIP_SLOTS,
   enhanceCost,
   enhancedStats,
   equipItem,
   generateEquip,
   grantExp,
   idleSettle,
+  isRepeatable,
   itemScore,
   monsterGroupSize,
   newDungeonRun,
+  pickPotion,
   powerOf,
   progressCollect,
   progressDungeon,
@@ -41,29 +45,44 @@ import {
   questReady,
   rand,
   registerQuestLookup,
+  repeatRemaining,
   resetDailies,
   resolveCombat,
   settleOffline,
   skillUpgradeCost,
   titleOf,
   totalStats,
+  unlockMapsByBoss,
   type Fighter,
 } from "./engine";
 import { clearSave, loadGame, newGame, saveGame, todayKey } from "./save";
-import type { EquipItem, Quality, SaveGame, SectId } from "./types";
+import type { BattleBrief, EquipItem, EquipSlot, Quality, SaveGame, SectId } from "./types";
 
 // 让任务进度函数能查到任务定义（避免 engine 依赖 data）
 registerQuestLookup((id) => QUEST_MAP[id]);
 
 export type WuxiaTab = "map" | "battle" | "bag" | "skill" | "quest" | "sect" | "dungeon" | "idle";
 
+/** 最近一场手动战斗的完整过程 */
+export interface BattleRecord {
+  at: number;
+  win: boolean;
+  title: string;
+  rounds: string[];
+  exp: number;
+  silver: number;
+  drops: EquipItem[];
+  died: boolean;
+}
+
 interface WuxiaState {
   tab: WuxiaTab;
   /** 当前选择的挂机/挑战地图 */
   selectedMap: string;
-  battleLog: string[];
-  /** 上一次手动战斗结果（用于展示掉落） */
-  lastDrops: EquipItem[];
+  /** 最近一场战斗（只保留过程与掉落） */
+  battle: BattleRecord | null;
+  /** 近期战绩（精简） */
+  recentBattles: BattleBrief[];
   toast: string;
   save: SaveGame;
 
@@ -71,6 +90,7 @@ interface WuxiaState {
   setTab: (tab: WuxiaTab) => void;
   selectMap: (mapId: string) => void;
   dismissToast: () => void;
+  setAutoAccept: (value: boolean) => void;
 
   rename: (name: string) => void;
   resetGame: () => void;
@@ -82,12 +102,14 @@ interface WuxiaState {
   usePotion: (potionId: string) => void;
   sellItem: (uid: string) => void;
   sellAllCommon: () => void;
-  /** 一键出售：品质不高于 maxQuality 的装备（可保护比当前更好的） */
+  /** 一键出售：品质不高于 maxQuality 的装备（可保护每部位最优） */
   sellBelow: (maxQuality: Quality, protectUpgrades: boolean) => void;
   equip: (uid: string) => void;
-  /** 一键装备：每个部位换上背包中最强的 */
+  /** 一键装备：所有部位换上背包中最强的 */
   equipBest: () => void;
-  unequip: (slot: EquipItem["slot"]) => void;
+  /** 指定部位换上背包中最强的一件 */
+  equipBestSlot: (slot: EquipSlot) => void;
+  unequip: (slot: EquipSlot) => void;
   enhance: (uid: string) => void;
   learnSkill: (skillId: string) => void;
   upgradeSkill: (skillId: string) => void;
@@ -151,8 +173,8 @@ function applyPost(
 export const useWuxiaStore = create<WuxiaState>((set, get) => ({
   tab: "map",
   selectedMap: "qingshi",
-  battleLog: [],
-  lastDrops: [],
+  battle: null,
+  recentBattles: [],
   toast: "",
   save: newGame(),
 
@@ -168,11 +190,18 @@ export const useWuxiaStore = create<WuxiaState>((set, get) => ({
         save,
         selectedMap: save.idle.config.mapId,
         toast: report
-          ? `离线 ${report.minutes} 分钟：${report.battles} 场战斗，击败 ${report.kills} 人，经验 +${report.exp}，银两 +${report.silver}`
+          ? `离线 ${report.minutes} 分钟：${report.battles} 场战斗，击败 ${report.kills} 人，经验 +${
+              report.exp
+            }，银两 +${report.silver}${
+              report.unlocked && report.unlocked.length > 0
+                ? `，解锁 ${report.unlocked.map((id) => MAP_BY_ID[id]?.name ?? id).join("、")}`
+                : ""
+            }`
           : "",
       });
       if (save.idle.config.enabled) ensureIdleTimer(get, set);
       saveGame(save);
+      acceptAvailableQuests(get, set);
       return;
     }
     const fresh = newGame();
@@ -184,6 +213,13 @@ export const useWuxiaStore = create<WuxiaState>((set, get) => ({
   selectMap: (mapId) => set({ selectedMap: mapId }),
   dismissToast: () => set({ toast: "" }),
 
+  setAutoAccept: (value) => {
+    const save = { ...get().save, autoAccept: value };
+    set({ save, toast: value ? "已开启自动接取任务" : "已关闭自动接取任务" });
+    persist(get);
+    if (value) acceptAvailableQuests(get, set);
+  },
+
   rename: (name) => {
     const trimmed = name.trim().slice(0, 12);
     if (!trimmed) return;
@@ -194,7 +230,7 @@ export const useWuxiaStore = create<WuxiaState>((set, get) => ({
   resetGame: () => {
     clearSave();
     const fresh = newGame();
-    set({ save: fresh, battleLog: [], lastDrops: [], selectedMap: "qingshi", toast: "江湖已重开" });
+    set({ save: fresh, battle: null, recentBattles: [], selectedMap: "qingshi", toast: "江湖已重开" });
     saveGame(fresh);
   },
   fight: (elite = false) => {
@@ -210,21 +246,13 @@ export const useWuxiaStore = create<WuxiaState>((set, get) => ({
       elite ? 1 : monsterGroupSize(monsterLevel, save.player.level),
     );
     const fighter = makeFighter(save);
+    const potion = pickPotion(save.player);
     const result = resolveCombat(fighter, group, {
-      autoHeal: true,
+      autoHeal: save.idle.config.autoHeal && potion != null,
       healThreshold: save.idle.config.healThreshold,
       verbose: true,
+      potion,
     });
-
-    const summary = [
-      `### ${result.win ? "战斗胜利" : "战斗失利"} · ${result.monster.name}`,
-      "",
-      ...result.rounds.slice(-14).map((line) => `- ${line}`),
-      "",
-      result.win
-        ? `> 经验 **+${result.exp}**　银两 **+${result.silver}**`
-        : "> 你力竭退下，调息片刻即可再战。",
-    ].join("\n");
 
     let player = {
       ...save.player,
@@ -233,6 +261,12 @@ export const useWuxiaStore = create<WuxiaState>((set, get) => ({
       silver: save.player.silver + result.silver,
     };
     player = addMaterials(player, result.materials);
+    if (potion && result.potionsUsed > 0) {
+      const potions = { ...player.potions };
+      potions[potion.id] = Math.max(0, (potions[potion.id] ?? 0) - result.potionsUsed);
+      if (potions[potion.id] === 0) delete potions[potion.id];
+      player = { ...player, potions };
+    }
     const leveled = grantExp(player, result.exp);
     player = leveled.player;
     if (result.died) {
@@ -240,7 +274,9 @@ export const useWuxiaStore = create<WuxiaState>((set, get) => ({
     }
 
     const inventory = [...player.inventory, ...result.drops].slice(0, 200);
-    const next = applyPost(
+    const killedIds = result.win ? group.map((m) => m.id) : [];
+
+    let next: SaveGame = applyPost(
       save,
       {
         player: { ...player, inventory },
@@ -252,18 +288,72 @@ export const useWuxiaStore = create<WuxiaState>((set, get) => ({
         },
       },
       {
-        kills: result.win ? group.map((m) => m.id) : [],
+        kills: killedIds,
         materials: result.materials,
       },
     );
 
+    // 击败地图首领 → 解锁下一地区
+    const unlock = unlockMapsByBoss(next.maps, killedIds);
+    const unlockNames = unlock.unlocked
+      .map((id) => MAP_BY_ID[id]?.name ?? id)
+      .filter(Boolean);
+    if (unlockNames.length > 0) {
+      next = { ...next, maps: unlock.maps };
+    }
+
+    const dropLine =
+      result.drops.length > 0
+        ? `> 拾得：${result.drops
+            .map((d) => `${QUALITY_META[d.quality].mark} ${d.name}（评分 ${itemScore(d)}）`)
+            .join("、")}`
+        : "> 本场没有装备掉落。";
+    const rounds = [
+      `#### ${result.win ? "战斗胜利" : "战斗失利"} · ${result.monster.name}${
+        group.length > 1 ? ` ×${group.length}` : ""
+      }`,
+      "",
+      ...result.rounds.map((line) => `- ${line}`),
+      "",
+      result.win
+        ? `> 经验 **+${result.exp}**　银两 **+${result.silver}**${
+            potion && result.potionsUsed > 0 ? `　${potion.name} **-${result.potionsUsed}**` : ""
+          }`
+        : "> 你力竭退下，调息片刻即可再战。",
+      result.win ? dropLine : "",
+    ].filter((line) => line !== "");
+
+    const brief: BattleBrief = {
+      at: Date.now(),
+      win: result.win,
+      monster: result.monster.name,
+      count: group.length,
+      exp: result.exp,
+      silver: result.silver,
+      drops: result.drops.map((d) => d.name),
+      died: result.died,
+    };
+
+    const toasts = [leveled.messages.join("；")].filter(Boolean);
+    if (unlockNames.length > 0) toasts.push(`击败首领，解锁新区域：${unlockNames.join("、")}`);
+
     set({
       save: next,
-      battleLog: [summary, ...state.battleLog].slice(0, 30),
-      lastDrops: result.drops,
-      toast: leveled.messages.length > 0 ? leveled.messages.join("；") : state.toast,
+      battle: {
+        at: brief.at,
+        win: result.win,
+        title: `${result.monster.name}${group.length > 1 ? ` ×${group.length}` : ""}`,
+        rounds,
+        exp: result.exp,
+        silver: result.silver,
+        drops: result.drops,
+        died: result.died,
+      },
+      recentBattles: [brief, ...state.recentBattles].slice(0, 12),
+      toast: toasts.join("；") || state.toast,
     });
     persist(get);
+    acceptAvailableQuests(get, set);
   },
 
   toggleIdle: () => {
@@ -298,19 +388,28 @@ export const useWuxiaStore = create<WuxiaState>((set, get) => ({
       mapId: save.idle.config.mapId,
       elapsedMs: elapsed,
       verbose: false,
+      potion: save.idle.config.autoHeal ? pickPotion(save.player) : undefined,
+      elite: save.idle.config.fightElite,
     });
+
+    const unlock = unlockMapsByBoss(save.maps, result.killedIds);
+    const unlockNames = unlock.unlocked
+      .map((id) => MAP_BY_ID[id]?.name ?? id)
+      .filter(Boolean);
 
     const battleLines = [
       `- ${new Date(now).toLocaleTimeString()}：${result.battles} 场战斗，击败 ${result.kills} 人，经验 +${result.exp}，银两 +${result.silver}${
         result.drops.length > 0 ? `，拾得 ${result.drops.map((d) => d.name).join("、")}` : ""
-      }${result.deaths > 0 ? `（力竭 ${result.deaths} 次）` : ""}`,
+      }${result.deaths > 0 ? `（力竭 ${result.deaths} 次）` : ""}${
+        unlockNames.length > 0 ? `，==解锁 ${unlockNames.join("、")}==` : ""
+      }`,
     ];
 
     const inventory = [...save.player.inventory, ...result.drops]
       .filter((item) => save.idle.config.collectCommon || item.quality !== "common" || itemScore(item) > 0)
       .slice(0, 200);
 
-    const next = applyPost(
+    let next: SaveGame = applyPost(
       save,
       {
         player: { ...result.player, inventory },
@@ -337,12 +436,18 @@ export const useWuxiaStore = create<WuxiaState>((set, get) => ({
       },
       { materials: result.materials },
     );
+    if (unlock.unlocked.length > 0) {
+      next = { ...next, maps: unlock.maps };
+    }
 
+    const toasts = [...result.messages];
+    if (unlockNames.length > 0) toasts.push(`击败首领，解锁新区域：${unlockNames.join("、")}`);
     set({ save: next });
-    if (result.messages.length > 0) {
-      set({ toast: result.messages.join("；") });
+    if (toasts.length > 0) {
+      set({ toast: toasts.join("；") });
     }
     persist(get);
+    acceptAvailableQuests(get, set);
   },
 
   buyPotion: (potionId, count) => {
@@ -379,8 +484,8 @@ export const useWuxiaStore = create<WuxiaState>((set, get) => ({
         ...save,
         player: {
           ...save.player,
-          hp: clamp(save.player.hp + potion.heal, 1, stats.hp),
-          mp: clamp(save.player.mp + potion.mana, 0, stats.mp),
+      hp: clamp(save.player.hp + Math.round(stats.hp * potion.healPct), 1, stats.hp),
+      mp: clamp(save.player.mp + Math.round(stats.mp * potion.manaPct), 0, stats.mp),
           potions,
         },
       },
@@ -492,6 +597,34 @@ export const useWuxiaStore = create<WuxiaState>((set, get) => ({
         player: { ...player, hp: Math.min(player.hp, stats.hp), mp: Math.min(player.mp, stats.mp) },
       },
       toast: `一键换装：${equipped.join("、")}`,
+    });
+    persist(get);
+  },
+
+  equipBestSlot: (slot) => {
+    const state = get();
+    const save = state.save;
+    const candidates = save.player.inventory.filter(
+      (i) => i.slot === slot && i.reqLevel <= save.player.level,
+    );
+    if (candidates.length === 0) {
+      set({ toast: "背包里没有该部位可穿的装备" });
+      return;
+    }
+    const best = candidates.reduce((a, b) => (itemScore(b) > itemScore(a) ? b : a));
+    const current = save.player.equipment[slot];
+    if (current && itemScore(current) >= itemScore(best)) {
+      set({ toast: `该部位已是当前最优（${current.name}）` });
+      return;
+    }
+    const { player } = equipItem(save.player, best);
+    const stats = totalStats(player);
+    set({
+      save: {
+        ...save,
+        player: { ...player, hp: Math.min(player.hp, stats.hp), mp: Math.min(player.mp, stats.mp) },
+      },
+      toast: `已换上 ${best.name}（评分 ${itemScore(best)}）`,
     });
     persist(get);
   },
@@ -655,6 +788,12 @@ export const useWuxiaStore = create<WuxiaState>((set, get) => ({
     const save = state.save;
     const quest = QUEST_MAP[questId];
     if (!quest) return;
+    const today = todayKey();
+    const repeat = isRepeatable(questId);
+    if (repeat && repeatRemaining(save, questId, today) <= 0) {
+      set({ toast: `「${quest.title}」今日次数已用完，明日再来` });
+      return;
+    }
     if (!questReady(save, questId)) {
       set({ toast: `目标未完成（${Math.min(questProgress(save, questId), questNeed(questId))}/${questNeed(questId)}）` });
       return;
@@ -692,39 +831,57 @@ export const useWuxiaStore = create<WuxiaState>((set, get) => ({
       );
     }
     if (quest.reward.materials) {
+      const gained: Record<string, number> = {};
       for (const mat of quest.reward.materials) {
-        if (mat.count > 0) {
-          player = addMaterials(player, { [mat.id]: mat.count });
-        }
+        if (mat.count > 0) gained[mat.id] = (gained[mat.id] ?? 0) + mat.count;
       }
+      player = addMaterials(player, gained);
+    }
+    if (quest.reward.potions) {
+      const gained: Record<string, number> = {};
+      for (const potion of quest.reward.potions) {
+        if (potion.count > 0) gained[potion.id] = (gained[potion.id] ?? 0) + potion.count;
+      }
+      player = addPotions(player, gained);
     }
     player = { ...player, inventory: [...player.inventory, ...drops].slice(0, 200) };
 
-    const maps = quest.unlockMap && !save.maps.includes(quest.unlockMap)
-      ? [...save.maps, quest.unlockMap]
-      : save.maps;
-    const nextQuests = {
+    let nextQuests = {
       ...save.quests,
-      active: save.quests.active.filter((id) => id !== questId),
-      completed: [...save.quests.completed, questId],
+      progress: { ...save.quests.progress },
     };
-    if (quest.next && !nextQuests.active.includes(quest.next) && !nextQuests.completed.includes(quest.next)) {
-      nextQuests.active = [...nextQuests.active, quest.next];
+    if (repeat) {
+      // 循环/门派任务：记录次数、重置进度，可立即再接
+      nextQuests = consumeRepeat(nextQuests, questId, today);
+      nextQuests.progress[questId] = 0;
+    } else {
+      nextQuests = {
+        ...nextQuests,
+        active: nextQuests.active.filter((id) => id !== questId),
+        completed: [...nextQuests.completed, questId],
+      };
+      if (quest.next && !nextQuests.active.includes(quest.next) && !nextQuests.completed.includes(quest.next)) {
+        nextQuests.active = [...nextQuests.active, quest.next];
+      }
     }
 
     const toasts = [`完成「${quest.title}」`];
     if (drops.length > 0) toasts.push(`获得 ${drops.map((d) => d.name).join("、")}`);
-    if (quest.unlockMap) {
-      toasts.push(`解锁新区域：${MAP_BY_ID[quest.unlockMap]?.name ?? quest.unlockMap}`);
+    if (quest.reward.potions?.length) {
+      toasts.push(`药品 ${quest.reward.potions.map((p) => `${POTIONS[p.id]?.name ?? p.id}×${p.count}`).join("、")}`);
+    }
+    if (repeat) {
+      const left = repeatRemaining({ ...save, quests: nextQuests }, questId, today);
+      toasts.push(`今日剩余 ${left} 次`);
     }
     if (quest.next) toasts.push(`新任务：${QUEST_MAP[quest.next]?.title ?? ""}`);
 
     set({
-      save: applyPost(save, { player, quests: nextQuests, maps }, { dungeonId: undefined }),
+      save: applyPost(save, { player, quests: nextQuests }),
       toast: toasts.join("；"),
-      lastDrops: drops,
     });
     persist(get);
+    acceptAvailableQuests(get, set);
   },
 
   enterDungeon: (dungeonId) => {
@@ -758,13 +915,31 @@ export const useWuxiaStore = create<WuxiaState>((set, get) => ({
     const monsterId = def.floors[Math.min(run.floor, def.floors.length - 1)];
     const group = buildMonsterGroup(monsterId, 1);
     const fighter = makeFighter(save);
+    const potion = pickPotion(save.player);
     const result = resolveCombat(fighter, group, {
-      autoHeal: true,
+      autoHeal: potion != null,
       healThreshold: 0.5,
       verbose: true,
+      potion,
     });
 
     let player = { ...save.player, hp: result.hp, mp: result.mp };
+    if (potion && result.potionsUsed > 0) {
+      const potions = { ...player.potions };
+      potions[potion.id] = Math.max(0, (potions[potion.id] ?? 0) - result.potionsUsed);
+      if (potions[potion.id] === 0) delete potions[potion.id];
+      player = { ...player, potions };
+    }
+    const dungeonBrief: BattleBrief = {
+      at: Date.now(),
+      win: result.win,
+      monster: `${result.monster.name}（${def.name} 第 ${run.floor + 1} 层）`,
+      count: group.length,
+      exp: result.exp,
+      silver: result.silver,
+      drops: result.drops.map((d) => d.name),
+      died: result.died,
+    };
     if (result.died) {
       player = { ...player, hp: Math.max(1, Math.round(totalStats(player).hp * 0.35)) };
       set({
@@ -821,12 +996,13 @@ export const useWuxiaStore = create<WuxiaState>((set, get) => ({
       );
       set({
         save: next,
-        lastDrops: pending.drops,
+        recentBattles: [dungeonBrief, ...state.recentBattles].slice(0, 12),
         toast: `通关「${def.name}」！经验 +${pending.exp}，银两 +${pending.silver}，获得 ${pending.drops
           .map((d) => d.name)
           .join("、")}`,
       });
       persist(get);
+      acceptAvailableQuests(get, set);
       return;
     }
 
@@ -844,6 +1020,7 @@ export const useWuxiaStore = create<WuxiaState>((set, get) => ({
           ].slice(0, 20),
         },
       },
+      recentBattles: [dungeonBrief, ...state.recentBattles].slice(0, 12),
       toast: `通过第 ${nextFloor} 层`,
     });
     persist(get);
@@ -864,7 +1041,6 @@ export const useWuxiaStore = create<WuxiaState>((set, get) => ({
     player = { ...player, inventory: [...player.inventory, ...run.pending.drops].slice(0, 200) };
     set({
       save: applyPost(save, { player, dungeonRun: null }),
-      lastDrops: run.pending.drops,
       toast: `撤退成功：带出经验 ${run.pending.exp}、银两 ${run.pending.silver}${
         def ? `（${def.name}）` : ""
       }`,
@@ -872,6 +1048,27 @@ export const useWuxiaStore = create<WuxiaState>((set, get) => ({
     persist(get);
   },
 }));
+
+/** 自动接取所有可接任务（开启后每次战斗/挂机都会检查） */
+function acceptAvailableQuests(
+  get: () => WuxiaState,
+  set: (patch: Partial<WuxiaState>) => void,
+): void {
+  const save = get().save;
+  if (!save.autoAccept) return;
+  const offerable = offerableQuests(save);
+  if (offerable.length === 0) return;
+  const quests = {
+    ...save.quests,
+    active: [...save.quests.active, ...offerable.map((q) => q.id)],
+    progress: { ...save.quests.progress },
+  };
+  for (const quest of offerable) {
+    if (quests.progress[quest.id] === undefined) quests.progress[quest.id] = 0;
+  }
+  set({ save: { ...save, quests } });
+  saveGame(get().save);
+}
 
 function ensureIdleTimer(get: () => WuxiaState, set: (patch: Partial<WuxiaState>) => void) {
   if (idleTimer !== null) return;

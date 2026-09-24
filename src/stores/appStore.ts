@@ -23,6 +23,8 @@ export function createDoc(partial: Partial<DocState> = {}): DocState {
     savedContent: "",
     isDirty: false,
     readOnly: false,
+    encrypted: false,
+    encryptedHeader: null,
     modifiedAt: 0,
     size: 0,
     cursorLine: 1,
@@ -38,12 +40,16 @@ export function createDoc(partial: Partial<DocState> = {}): DocState {
 
 /** 由后端返回的文件数据构造文档 */
 export function docFromPayload(payload: FilePayload): DocState {
+  const encrypted = payload.encrypted ?? false;
   return createDoc({
     filePath: payload.path,
     content: payload.content,
     savedContent: payload.content,
     modifiedAt: payload.modifiedAt,
     size: payload.size,
+    encrypted,
+    encryptedHeader: payload.encryptedHeader ?? null,
+    // 加密文档可正常编辑，保存时由后端按原格式加密写回
     readOnly: payload.size > LARGE_FILE_BYTES,
   });
 }

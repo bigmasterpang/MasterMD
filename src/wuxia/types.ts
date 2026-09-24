@@ -87,6 +87,10 @@ export interface MapDef {
   monsters: string[];
   elite?: string;
   dungeon?: string;
+  /** 地图首领：击败后解锁下一地区 */
+  boss?: string;
+  /** 击败首领后解锁的地区 */
+  unlockNext?: string;
   /** 该地图的支线任务 */
   sideQuests: string[];
   /** 该地图的 NPC */
@@ -158,7 +162,8 @@ export type QuestObjective =
 
 export interface QuestDef {
   id: string;
-  kind: "main" | "side" | "daily";
+  /** main 主线 / side 支线 / daily 日常 / repeat 循环 / sect 门派 */
+  kind: "main" | "side" | "daily" | "repeat" | "sect";
   /** 主线章节 1~12 */
   chapter?: number;
   title: string;
@@ -174,11 +179,15 @@ export interface QuestDef {
     /** 保底装备品质 */
     equip?: Quality;
     materials?: Array<{ id: string; count: number }>;
+    /** 药品奖励 */
+    potions?: Array<{ id: string; count: number }>;
   };
-  /** 完成后解锁的地图 */
-  unlockMap?: string;
   /** 下一章 */
   next?: string;
+  /** 可重复提交：每日可完成次数 */
+  repeatDaily?: number;
+  /** 门派任务所属门派 */
+  sect?: SectId;
 }
 
 export interface DungeonDef {
@@ -234,6 +243,8 @@ export interface QuestState {
   completed: string[];
   /** 日常任务最近重置日期（YYYY-MM-DD） */
   dailyDate?: string;
+  /** 循环/门派任务当日已提交次数：questId -> { date, used } */
+  repeatUsed?: Record<string, { date: string; used: number }>;
 }
 
 export interface IdleConfig {
@@ -249,6 +260,18 @@ export interface IdleConfig {
   collectCommon: boolean;
 }
 
+/** 战斗简报（只保留近期） */
+export interface BattleBrief {
+  at: number;
+  win: boolean;
+  monster: string;
+  count: number;
+  exp: number;
+  silver: number;
+  drops: string[];
+  died: boolean;
+}
+
 export interface IdleReport {
   minutes: number;
   battles: number;
@@ -258,6 +281,8 @@ export interface IdleReport {
   drops: string[];
   leveledTo: number;
   deaths: number;
+  /** 离线期间解锁的地区 */
+  unlocked?: string[];
 }
 
 export interface IdleState {
@@ -288,6 +313,8 @@ export interface SaveGame {
   quests: QuestState;
   /** 已解锁地图 */
   maps: string[];
+  /** 自动接取可接任务 */
+  autoAccept: boolean;
   idle: IdleState;
   dungeonRun: DungeonRun | null;
   /** 副本今日剩余次数 */

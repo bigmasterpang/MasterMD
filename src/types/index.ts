@@ -13,6 +13,10 @@ export interface FilePayload {
   content: string;
   modifiedAt: number;
   size: number;
+  /** 是否为企业透明加密文档（已自动解密） */
+  encrypted?: boolean;
+  /** 加密文档的 4096 字节文件头（base64），保存时用于按原格式加密写回 */
+  encryptedHeader?: string | null;
 }
 
 /** 后端 file-changed 事件载荷 */
@@ -41,6 +45,10 @@ export interface DocState {
   isDirty: boolean;
   /** 超过 10MB 的文件以只读方式打开 */
   readOnly: boolean;
+  /** 企业加密文档（打开时已解密，保存时按原格式加密写回） */
+  encrypted: boolean;
+  /** 加密文档的文件头（base64），保存时用于重新加密 */
+  encryptedHeader: string | null;
   /** 磁盘上的最后修改时间基线（毫秒） */
   modifiedAt: number;
   size: number;

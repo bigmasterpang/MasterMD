@@ -1,5 +1,6 @@
 //! 文件读写相关命令：读取 / 写入 / 保存对话框 / 路径辅助。
 
+use crate::commands::esafenet;
 use serde::Serialize;
 use std::path::{Path, PathBuf};
 use std::time::UNIX_EPOCH;
@@ -12,6 +13,10 @@ pub struct FilePayload {
     pub content: String,
     pub modified_at: u64,
     pub size: u64,
+    /// 是否为 Esafenet 透明加密文档（内容已解密，保存时按原格式加密写回）
+    pub encrypted: bool,
+    /// 加密文档的 4096 字节文件头（base64），保存时用于重新加密
+    pub encrypted_header: Option<String>,
 }
 
 /// 校验并规范化用户传入的路径，拒绝空路径与含 NUL 的路径。
@@ -65,25 +70,58 @@ pub async fn read_markdown_file(path: String) -> Result<FilePayload, String> {
     if meta.is_dir() {
         return Err("目标是文件夹，无法作为文档打开".to_string());
     }
-    let bytes = std::fs::read(&p).map_err(|e| format!("读取文件失败: {e}"))?;
+    let raw = std::fs::read(&p).map_err(|e| format!("读取文件失败: {e}"))?;
+    // 企业透明加密文档：自动解密为明文供编辑预览
+    let (bytes, encrypted, header) = match esafenet::decrypt_esafenet(&raw) {
+        Some(decrypted) => (decrypted, true, Some(base64_encode(&raw[..4096]))),
+        None => (raw, false, None),
+    };
     Ok(FilePayload {
         path: p.to_string_lossy().to_string(),
         content: decode_text(&bytes),
         modified_at: modified_ms(&meta),
         size: meta.len(),
+        encrypted,
+        encrypted_header: header,
     })
 }
 
 /// 写入文件，UTF-8 无 BOM。返回写入后的修改时间（毫秒）供前端刷新基线。
+///
+/// 加密文档保持加密格式写回：
+/// 1. 前端传入打开时的 4096 字节文件头（base64）时，用该头重新加密；
+/// 2. 否则若目标文件本身是加密文档（如新建文档覆盖加密文件），沿用其文件头；
+/// 3. 都不是时按普通文本原样写入。
 #[tauri::command]
-pub async fn write_markdown_file(path: String, content: String) -> Result<u64, String> {
+pub async fn write_markdown_file(
+    path: String,
+    content: String,
+    encrypted_header: Option<String>,
+) -> Result<u64, String> {
     let p = validate_path(&path)?;
     if let Some(parent) = p.parent() {
         if !parent.as_os_str().is_empty() && !parent.exists() {
             std::fs::create_dir_all(parent).map_err(|e| format!("创建目录失败: {e}"))?;
         }
     }
-    std::fs::write(&p, content.as_bytes()).map_err(|e| format!("写入文件失败: {e}"))?;
+
+    let header = match encrypted_header.filter(|s| !s.is_empty()) {
+        Some(b64) => Some(base64_decode(&b64)?),
+        None => {
+            // 目标已存在且为加密文档时沿用其头部
+            std::fs::read(&p)
+                .ok()
+                .filter(|existing| esafenet::is_esafenet_encrypted(existing))
+                .map(|existing| existing[..4096].to_vec())
+        }
+    };
+
+    let bytes = match header {
+        Some(head) => esafenet::encrypt_esafenet(&head, content.as_bytes()),
+        None => content.as_bytes().to_vec(),
+    };
+
+    std::fs::write(&p, &bytes).map_err(|e| format!("写入文件失败: {e}"))?;
     let meta = std::fs::metadata(&p).map_err(|e| format!("读取文件信息失败: {e}"))?;
     Ok(modified_ms(&meta))
 }

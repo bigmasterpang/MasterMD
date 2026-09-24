@@ -102,6 +102,15 @@ export function StatusBar() {
       )}
 
       <span title="编码">UTF-8</span>
+      {doc?.encrypted ? (
+        <span
+          className="flex items-center gap-1 text-accent"
+          title="企业加密文档：已自动解密，保存时按原加密格式写回"
+        >
+          <Icon name="key" size={11} />
+          已解密
+        </span>
+      ) : null}
       {doc?.readOnly ? <span className="text-warning">只读</span> : null}
       <span title="当前视图模式">{VIEW_LABEL[viewMode]}</span>
     </div>
