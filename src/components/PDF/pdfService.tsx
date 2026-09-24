@@ -112,6 +112,61 @@ export function jumpToPdfPage(docId: string, pageNum: number) {
 
 /** 添加高亮标注 */
 /** 添加高亮标注（支持同时附加批注文本） */
+/**
+ * 智能合并同行的相邻或微小重叠高亮矩形，彻底杜绝跨 span 接缝导致的颜色叠加加深
+ */
+export function mergeHighlightRects(
+  rawRects: Array<{ xPercent: number; yPercent: number; wPercent: number; hPercent: number }>,
+): Array<{ xPercent: number; yPercent: number; wPercent: number; hPercent: number }> {
+  if (rawRects.length <= 1) return rawRects;
+
+  // 按垂直位置升序排序，同垂直位置按水平位置排序
+  const sorted = [...rawRects].sort((a, b) => {
+    const diffY = a.yPercent - b.yPercent;
+    if (Math.abs(diffY) > 0.4) return diffY;
+    return a.xPercent - b.xPercent;
+  });
+
+  const merged: Array<{ xPercent: number; yPercent: number; wPercent: number; hPercent: number }> = [];
+
+  for (const curr of sorted) {
+    if (merged.length === 0) {
+      merged.push({ ...curr });
+      continue;
+    }
+
+    const prev = merged[merged.length - 1];
+
+    // 判断是否在同一行：两者的垂直中心差小于各自高度的 60%
+    const prevCenterY = prev.yPercent + prev.hPercent / 2;
+    const currCenterY = curr.yPercent + curr.hPercent / 2;
+    const minHeight = Math.min(prev.hPercent, curr.hPercent);
+    const isSameLine = Math.abs(prevCenterY - currCenterY) < Math.max(minHeight * 0.6, 0.4);
+
+    // 水平方向上：如果相邻接触、有重叠或缝隙小于等于 1.0%（一个字符间距）
+    const prevRight = prev.xPercent + prev.wPercent;
+    const currRight = curr.xPercent + curr.wPercent;
+    const isHorizontallyTouching = curr.xPercent <= prevRight + 1.0;
+
+    if (isSameLine && isHorizontallyTouching) {
+      // 合并两矩形为同一行连续矩形
+      const newLeft = Math.min(prev.xPercent, curr.xPercent);
+      const newRight = Math.max(prevRight, currRight);
+      const newTop = Math.min(prev.yPercent, curr.yPercent);
+      const newBottom = Math.max(prev.yPercent + prev.hPercent, curr.yPercent + curr.hPercent);
+
+      prev.xPercent = Number(newLeft.toFixed(3));
+      prev.yPercent = Number(newTop.toFixed(3));
+      prev.wPercent = Number((newRight - newLeft).toFixed(3));
+      prev.hPercent = Number((newBottom - newTop).toFixed(3));
+    } else {
+      merged.push({ ...curr });
+    }
+  }
+
+  return merged;
+}
+
 export function addPdfHighlight(
   docId: string,
   pageNum: number,
@@ -124,17 +179,20 @@ export function addPdfHighlight(
   const doc = useAppStore.getState().docs.find((d) => d.id === docId);
   if (!doc) return null;
 
-  const rects: Array<{ xPercent: number; yPercent: number; wPercent: number; hPercent: number }> = [];
+  const rawRects: Array<{ xPercent: number; yPercent: number; wPercent: number; hPercent: number }> = [];
   for (const r of clientRects) {
     if (r.width <= 0 || r.height <= 0) continue;
     const xPercent = Math.max(0, ((r.left - pageBoundingRect.left) / pageBoundingRect.width) * 100);
     const yPercent = Math.max(0, ((r.top - pageBoundingRect.top) / pageBoundingRect.height) * 100);
     const wPercent = Math.min(100, (r.width / pageBoundingRect.width) * 100);
     const hPercent = Math.min(100, (r.height / pageBoundingRect.height) * 100);
-    rects.push({ xPercent, yPercent, wPercent, hPercent });
+    rawRects.push({ xPercent, yPercent, wPercent, hPercent });
   }
 
-  if (rects.length === 0) return null;
+  if (rawRects.length === 0) return null;
+
+  // 关键优化：智能合并同行碎片矩形，消除选区跨 span 接缝重叠变暗问题
+  const rects = mergeHighlightRects(rawRects);
 
   const newHighlight: PdfHighlight = {
     id: `hl-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`,

@@ -37,14 +37,25 @@ export function createDoc(partial: Partial<DocState> = {}): DocState {
     frontMatter: null,
     frontMatterRaw: null,
     scrollTop: 0,
-    pane: partial.pane !== undefined ? partial.pane : 0,
+    pane:
+      partial.pane !== undefined
+        ? partial.pane
+        : (typeof window !== "undefined" && useAppStore.getState()?.layout?.activePane !== undefined)
+          ? useAppStore.getState().layout.activePane
+          : 0,
     ...partial,
   };
 }
 
 /** 由后端返回的文件数据构造文档 */
-export function docFromPayload(payload: FilePayload): DocState {
+export function docFromPayload(payload: FilePayload, pane?: 0 | 1): DocState {
   const encrypted = payload.encrypted ?? false;
+  const targetPane =
+    pane !== undefined
+      ? pane
+      : (typeof window !== "undefined" && useAppStore.getState()?.layout?.activePane !== undefined)
+        ? useAppStore.getState().layout.activePane
+        : 0;
   return createDoc({
     filePath: payload.path,
     content: payload.content,
@@ -57,6 +68,7 @@ export function docFromPayload(payload: FilePayload): DocState {
     eol: payload.eol ?? "lf",
     // 加密文档可正常编辑，保存时由后端按原格式加密写回
     readOnly: payload.size > LARGE_FILE_BYTES,
+    pane: targetPane,
   });
 }
 

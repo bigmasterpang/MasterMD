@@ -102,14 +102,17 @@ async function ensureNoDirty(doc: { id: string; filePath: string | null; isDirty
   return true;
 }
 
-export async function openPath(path: string): Promise<boolean> {
+export async function openPath(path: string, targetPane?: 0 | 1): Promise<boolean> {
+  const currentActivePane = useAppStore.getState().layout.activePane ?? 0;
+  const effectivePane = targetPane !== undefined ? targetPane : currentActivePane;
+
   if (!(await ensureNoDirty(getActiveDoc()))) return false;
 
   const existing = useAppStore
     .getState()
     .docs.find((d) => samePath(d.filePath, path));
   if (existing) {
-    useAppStore.getState().activateDoc(existing.id);
+    useAppStore.getState().activateDoc(existing.id, effectivePane);
     return true;
   }
 
@@ -119,6 +122,7 @@ export async function openPath(path: string): Promise<boolean> {
       const doc = createDoc({
         filePath: payload.path,
         docType: "pdf",
+        pane: effectivePane,
         pdfBase64: payload.dataBase64,
         savedPdfBase64: payload.dataBase64,
         cleanPdfBase64: payload.dataBase64,
@@ -146,7 +150,7 @@ export async function openPath(path: string): Promise<boolean> {
       });
       if (!ok) return false;
     }
-    const doc = docFromPayload(payload);
+    const doc = docFromPayload(payload, effectivePane);
     useAppStore.getState().addDoc(doc);
     // 非 Markdown 文件（代码/纯文本）固定以源码模式打开
     if (!isMarkdownPath(payload.path)) {
@@ -163,7 +167,7 @@ export async function openPath(path: string): Promise<boolean> {
   }
 }
 
-export async function openFileDialog(): Promise<void> {
+export async function openFileDialog(targetPane?: 0 | 1): Promise<void> {
   try {
     const selected = await openDialog({
       multiple: false,
@@ -172,7 +176,7 @@ export async function openFileDialog(): Promise<void> {
       filters: OPEN_DIALOG_FILTERS,
     });
     if (typeof selected === "string") {
-      await openPath(selected);
+      await openPath(selected, targetPane);
     }
   } catch (error) {
     await showMessage("打开失败", String(error));

@@ -273,13 +273,17 @@ export function PdfViewer({ docId, isDark }: PdfViewerProps) {
     [numPages, docId],
   );
 
-  // 旋转或重载后自动重新定位回当前所在页
+  // 旋转或重载后根据锚点重新定位回目标页
   useEffect(() => {
-    if (!pdfProxy || currentPage <= 1) return;
-    const timer = setTimeout(() => {
-      scrollToPage(currentPage);
-    }, 60);
-    return () => clearTimeout(timer);
+    if (!pdfProxy) return;
+    const targetPage = targetPageAfterReload.current;
+    if (targetPage && targetPage >= 1) {
+      const timer = setTimeout(() => {
+        scrollToPage(targetPage);
+        targetPageAfterReload.current = null;
+      }, 60);
+      return () => clearTimeout(timer);
+    }
   }, [pdfProxy, scrollToPage]);
 
   // 适应页面宽度计算
@@ -328,9 +332,9 @@ export function PdfViewer({ docId, isDark }: PdfViewerProps) {
 
   // 视口滚动监听以追踪当前页码
   const handleScroll = () => {
-    if (!containerRef.current) return;
+    if (!containerRef.current || pageRefs.current.size === 0) return;
     const containerTop = containerRef.current.getBoundingClientRect().top;
-    let closestPage = 1;
+    let closestPage = currentPage;
     let minDistance = Infinity;
 
     pageRefs.current.forEach((el, pNum) => {
@@ -573,8 +577,12 @@ export function PdfViewer({ docId, isDark }: PdfViewerProps) {
   }, [selectionMenu, docId, doc?.pdfHighlights]);
 
   // 高亮项自身右键菜单（支持为高亮添加/编辑注释与删除）
+  // 高亮项自身右键菜单（支持为高亮添加/编辑注释、切换颜色与删除）
   const highlightMenuGroups = useMemo<ContextMenuItem[][]>(() => {
     if (!highlightMenu) return [];
+    const currentHl = doc?.pdfHighlights?.find((h) => h.id === highlightMenu.highlightId);
+    const currentColor = currentHl?.color || "yellow";
+
     return [
       [
         {
@@ -597,6 +605,32 @@ export function PdfViewer({ docId, isDark }: PdfViewerProps) {
       ],
       [
         {
+          label: "切换为黄色",
+          icon: currentColor === "yellow" ? "check" : undefined,
+          onClick: () => {
+            updatePdfHighlight(docId, highlightMenu.highlightId, { color: "yellow" });
+            setHighlightMenu(null);
+          },
+        },
+        {
+          label: "切换为绿色",
+          icon: currentColor === "green" ? "check" : undefined,
+          onClick: () => {
+            updatePdfHighlight(docId, highlightMenu.highlightId, { color: "green" });
+            setHighlightMenu(null);
+          },
+        },
+        {
+          label: "切换为粉色",
+          icon: currentColor === "pink" ? "check" : undefined,
+          onClick: () => {
+            updatePdfHighlight(docId, highlightMenu.highlightId, { color: "pink" });
+            setHighlightMenu(null);
+          },
+        },
+      ],
+      [
+        {
           label: "清除本页所有高亮",
           onClick: () => {
             clearPageHighlights(docId, highlightMenu.pageNum);
@@ -612,7 +646,7 @@ export function PdfViewer({ docId, isDark }: PdfViewerProps) {
         },
       ],
     ];
-  }, [highlightMenu, docId]);
+  }, [highlightMenu, docId, doc?.pdfHighlights]);
 
   // 空白处/非文本区域右键菜单（添加便签附注、复制页面为图片、另存此页、顺/逆时针旋转等实用功能）
   const pageContextMenuGroups = useMemo<ContextMenuItem[][]>(() => {
@@ -1314,35 +1348,57 @@ function PdfPage({
             }}
           />
 
-          {/* 交互式高亮标注遮罩层：高亮矩形 + 附带的划词注释小角标 */}
+          {/* 交互式高亮标注遮罩层：防重叠加深合成图层 + 点击交互热区 + 划词注释角标 */}
           {highlights && highlights.length > 0 ? (
             <div className="absolute inset-0 pointer-events-none z-10">
               {highlights.map((hl) => {
                 const hasComment = Boolean(hl.comment && hl.comment.trim());
                 const firstRect = hl.rects[0];
+                const solidColor =
+                  hl.color === "green"
+                    ? "#22c55e"
+                    : hl.color === "pink"
+                      ? "#ec4899"
+                      : "#f59e0b";
+
                 return (
                   <div key={hl.id} className="contents pointer-events-auto">
+                    {/* 1. 纯净视觉混合层：统一设置 opacity 与 multiply，内部各个矩形重叠绝不加深 */}
+                    <div
+                      style={{ mixBlendMode: "multiply", opacity: 0.45 }}
+                      className="absolute inset-0 pointer-events-none"
+                    >
+                      {hl.rects.map((r, i) => (
+                        <div
+                          key={`${hl.id}-visual-${i}`}
+                          style={{
+                            left: `${r.xPercent}%`,
+                            top: `${r.yPercent}%`,
+                            width: `${r.wPercent}%`,
+                            height: `${r.hPercent}%`,
+                            backgroundColor: solidColor,
+                          }}
+                          className="absolute rounded-xs"
+                        />
+                      ))}
+                    </div>
+
+                    {/* 2. 透明交互响应热区 */}
                     {hl.rects.map((r, i) => (
                       <div
-                        key={`${hl.id}-${i}`}
+                        key={`${hl.id}-hit-${i}`}
                         data-highlight-id={hl.id}
                         style={{
                           left: `${r.xPercent}%`,
                           top: `${r.yPercent}%`,
                           width: `${r.wPercent}%`,
                           height: `${r.hPercent}%`,
-                          backgroundColor:
-                            hl.color === "green"
-                              ? "rgba(74, 222, 128, 0.45)"
-                              : hl.color === "pink"
-                                ? "rgba(244, 114, 182, 0.45)"
-                                : "rgba(250, 204, 21, 0.45)",
                         }}
-                        className="absolute rounded-xs mix-blend-multiply cursor-pointer hover:opacity-85 transition-opacity"
+                        className="absolute cursor-pointer rounded-xs hover:bg-black/5 dark:hover:bg-white/10 transition-colors"
                         title={
                           hasComment
-                            ? `注释: ${hl.comment}\n(点击查看/编辑注释，右键移除)`
-                            : "划词高亮 (点击或右键可添加注释或移除)"
+                            ? `注释: ${hl.comment}\n(点击查看/编辑注释，右键切换颜色或移除)`
+                            : "划词高亮 (点击查看/添加注释，右键切换颜色或移除)"
                         }
                         onClick={(e) => {
                           e.stopPropagation();
@@ -1443,7 +1499,7 @@ function PdfHighlightCommentCard({
 
   useEffect(() => {
     if (isOpen) {
-      setTimeout(() => textareaRef.current?.focus(), 60);
+      setTimeout(() => textareaRef.current?.focus({ preventScroll: true }), 60);
     }
   }, [isOpen]);
 
@@ -1548,7 +1604,7 @@ function PdfHighlightCommentCard({
                 handleBlur();
                 onClose();
               }}
-              className="rounded bg-accent px-2 py-0.5 text-[11px] font-medium text-accent-contrast shadow-2xs hover:brightness-105"
+              className="rounded bg-accent px-2.5 py-1 text-[11px] font-semibold text-white shadow-xs hover:brightness-110 active:brightness-95 transition-all"
             >
               完成
             </button>
@@ -1582,7 +1638,7 @@ function PdfNoteMarker({
 
   useEffect(() => {
     if (isOpen) {
-      setTimeout(() => textareaRef.current?.focus(), 60);
+      setTimeout(() => textareaRef.current?.focus({ preventScroll: true }), 60);
     }
   }, [isOpen]);
 
@@ -1716,7 +1772,7 @@ function PdfNoteMarker({
                 handleBlur();
                 onClose();
               }}
-              className="rounded bg-accent px-2 py-0.5 text-[11px] font-medium text-accent-contrast shadow-2xs hover:brightness-105"
+              className="rounded bg-accent px-2.5 py-1 text-[11px] font-semibold text-white shadow-xs hover:brightness-110 active:brightness-95 transition-all"
             >
               完成
             </button>

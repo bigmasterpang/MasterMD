@@ -424,6 +424,12 @@ export function TabBar({ pane = 0 }: Props) {
             groups={[
               [
                 {
+                  label: "打开文件…",
+                  icon: "folder-open",
+                  hint: "Ctrl+O",
+                  onClick: () => void openFileDialog(pane),
+                },
+                {
                   label: "新建 Markdown 文档 (.md)",
                   icon: "file-text",
                   hint: "Ctrl+N",
@@ -433,12 +439,6 @@ export function TabBar({ pane = 0 }: Props) {
                   label: "新建空白文档",
                   icon: "file-plus",
                   onClick: () => void newDocument("blank", pane),
-                },
-                {
-                  label: "打开文件…",
-                  icon: "folder-open",
-                  hint: "Ctrl+O",
-                  onClick: () => void openFileDialog(),
                 },
               ],
             ]}
