@@ -25,9 +25,6 @@ function utf8Size(text: string): number {
 
 let lastSelfWriteAt = 0;
 
-/** 加密文档提示只在每个会话弹出一次 */
-let encryptedNoticeShown = false;
-
 /** 记录一次由本应用发起的写入，用于忽略监听器回传的自身事件 */
 export function markSelfWrite(): void {
   lastSelfWriteAt = Date.now();
@@ -134,15 +131,7 @@ export async function openPath(path: string): Promise<boolean> {
     }
     void addRecentFile(payload.path);
     void watchFile(payload.path);
-    // 加密文档：打开后再提示（每个会话仅一次），不阻塞文档展示
-    if (payload.encrypted && !encryptedNoticeShown) {
-      encryptedNoticeShown = true;
-      void showMessage(
-        "已解密打开",
-        `检测到企业加密文档「${fileName(payload.path)}」，已自动解密打开，可正常编辑。\n\n` +
-          "保存（Ctrl+S）时会自动按原加密格式写回，不会破坏加密状态。",
-      );
-    }
+    // 加密文档不弹窗提示：状态栏已有「已解密」标记，保存时自动按原格式加密写回
     return true;
   } catch (error) {
     await showMessage("打开失败", `无法打开文件：\n${path}\n\n${String(error)}`);
