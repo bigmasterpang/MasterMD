@@ -167,6 +167,21 @@ where
         "WinHttpOpenRequest",
     )?;
 
+    if secure {
+        let sec_flags: u32 = SECURITY_FLAG_IGNORE_UNKNOWN_CA
+            | SECURITY_FLAG_IGNORE_CERT_DATE_INVALID
+            | SECURITY_FLAG_IGNORE_CERT_CN_INVALID
+            | SECURITY_FLAG_IGNORE_CERT_WRONG_USAGE;
+        unsafe {
+            let bytes = sec_flags.to_ne_bytes();
+            let _ = WinHttpSetOption(
+                Some(request.0),
+                WINHTTP_OPTION_SECURITY_FLAGS,
+                Some(&bytes),
+            );
+        }
+    }
+
     unsafe {
         WinHttpSendRequest(request.0, None, None, 0, 0, 0)
             .map_err(|e| format!("发送请求失败: {e}"))?;
@@ -378,7 +393,7 @@ pub fn is_installed_build() -> bool {
 #[cfg(windows)]
 fn install_kind() -> &'static str {
     if is_installed_build() {
-        "installed"
+        "installer"
     } else {
         "portable"
     }

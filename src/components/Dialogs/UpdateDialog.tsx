@@ -26,7 +26,7 @@ export function UpdateDialog() {
   const canInstall = Boolean(info?.downloadUrl);
   const percent = Math.round(progress * 100);
   /** 是否为已安装版本（走静默升级）或历史未打标记但为 setup.exe 的安装包 */
-  const isInstalled = info?.installKind === "installed";
+  const isInstalled = info?.installKind === "installed" || info?.installKind === "installer";
   const isLegacyInstaller = !isInstalled && /setup\.exe$/i.test(info?.filename ?? "");
 
   const title = error
@@ -211,7 +211,7 @@ export function UpdateDialog() {
                   : formatTime(new Date(info.publishedAt).getTime())}
               </span>
             ) : null}
-            <span>来源：{info.source === "portal" ? "软件中心" : "GitHub"}</span>
+            <span>来源：{info.source === "portal" ? "Master 软件中心 (master.dapang.wang)" : "GitHub Release"}</span>
             <span>通道：{isInstalled ? "安装版（保留文件关联）" : "绿色版（便携）"}</span>
           </div>
           {info.notes ? (
@@ -247,7 +247,7 @@ export function UpdateDialog() {
               已是最新版本（当前 <b>{info.current}</b>）
             </div>
           </div>
-          <div className="text-[12px] text-muted">版本来源：软件中心 · bigmasterpang/MasterMD</div>
+          <div className="text-[12px] text-muted">版本来源：Master 软件中心 (master.dapang.wang)</div>
         </div>
       )}
     </Modal>

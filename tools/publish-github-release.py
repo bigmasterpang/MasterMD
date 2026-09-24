@@ -11,15 +11,14 @@ import urllib.request
 from pathlib import Path
 
 REPO = "bigmasterpang/MasterMD"
-VERSION = "0.14.0"
+VERSION = "0.14.1"
 TAG_NAME = f"v{VERSION}"
 
-RELEASE_NOTES = """### MasterMD v0.14.0 更新日志
+RELEASE_NOTES = """### MasterMD v0.14.1 更新日志
 
-1. **全新指针拖拽与跨栏分栏**：重构标签页拖拽机制为平滑轻量级 Pointer 架构，彻底解决 Windows Webview2 下原生拖放丢失与闪烁问题；支持栏内精准拖拽排序与跨栏/跨视口拖拽分栏，源栏清空时自动退回单栏模式。
-2. **滚轮快速滚动切换标签**：鼠标光标悬停在标签栏上时，支持通过鼠标滚轮平滑切换相邻标签页，并自动滚动显露激活标签。
-3. **空白文档纯净模式**：新建空白文档时默认非 Markdown 格式，彻底屏蔽 Markdown 视图模式切换（预览/分屏）、语法格式化工具栏与大纲目录，提供纯代码/文本源码编辑体验。
-4. **同名文档智能编号标识**：打开或新建多个同名文档时，自动按顺序追加编号标识（如 README.md (1)、README.md (2)），并在标签页与窗口标题保持一致区分。
+1. **修复检查更新服务器通道**：修复安装版向软件中心请求版本时传参 `variant=installed` 触发 400 Bad Request 导致回退到 GitHub 的严重缺陷，严格采用 `installer` 与 `portable` 规范，确保优先直连 `master.dapang.wang` 软件中心。
+2. **修复重复点击检查更新无弹窗**：重构更新检查弹窗逻辑，区分用户主动点击与后台静默检查，确保主动点击检查更新时每一次都能正确响应并弹出对话框。
+3. **增强 WinHTTP 与网络容错**：Rust WinHTTP 请求增加安全证书选项兼容策略，避免在不同代理与系统根证书环境下失败；前端增加软件中心双节点直接通信双保险。
 """
 
 

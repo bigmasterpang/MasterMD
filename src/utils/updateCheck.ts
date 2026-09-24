@@ -19,7 +19,7 @@ export interface PortalRelease {
   downloadUrl: string;
   hasUpdate: boolean;
   currentVersion: string;
-  installKind: "portable" | "installed";
+  installKind: "portable" | "installed" | "installer";
 }
 
 export interface UpdateInfo {
@@ -40,7 +40,7 @@ export interface UpdateInfo {
   downloadUrl?: string;
   filename?: string;
   /** 安装类型：绿色便携版 / NSIS 安装版 */
-  installKind?: "portable" | "installed";
+  installKind?: "portable" | "installed" | "installer";
 }
 
 interface GithubRelease {
@@ -128,9 +128,50 @@ async function checkGithub(current: string): Promise<UpdateInfo | null> {
   return null;
 }
 
+/** 前端直接请求软件中心双节点（当 Rust WinHTTP 遇特殊环境异常时的二级保障） */
+async function checkPortalDirect(current: string): Promise<UpdateInfo | null> {
+  const nodes = ["https://master.dapang.wang", "http://106.14.225.57"];
+  for (const base of nodes) {
+    for (const variant of ["installer", "portable"]) {
+      try {
+        const resp = await fetch(`${base}/api/apps/mastermd/windows/latest?variant=${variant}`, {
+          cache: "no-store",
+        });
+        if (resp.ok) {
+          const json = await resp.json() as Record<string, unknown>;
+          const version = typeof json.version === "string" ? json.version : "";
+          if (version) {
+            const dl = typeof json.download_url === "string" ? json.download_url : "";
+            return {
+              current,
+              latest: version,
+              hasUpdate: compareVersion(version, current) > 0,
+              publishedAt: typeof json.uploaded_at === "string" ? json.uploaded_at : null,
+              notes: typeof json.release_notes === "string" ? json.release_notes : "",
+              url: `${base}${dl}`,
+              noRelease: false,
+              checkedAt: Date.now(),
+              source: "portal",
+              size: typeof json.size === "number" ? json.size : undefined,
+              humanSize: typeof json.human_size === "string" ? json.human_size : undefined,
+              sha256: typeof json.sha256 === "string" ? json.sha256 : undefined,
+              downloadUrl: `${base}${dl}`,
+              filename: typeof json.filename === "string" ? json.filename : undefined,
+              installKind: (variant === "installer" ? "installed" : "portable") as "portable" | "installed",
+            };
+          }
+        }
+      } catch {
+        /* try next */
+      }
+    }
+  }
+  return null;
+}
+
 /**
  * 检查更新：优先软件中心（master.dapang.wang → 国内节点回退），
- * 失败或未发布时回退到 GitHub Release。
+ * 软件中心彻底不可达时才回退到 GitHub Release。
  */
 export async function checkForUpdate(): Promise<UpdateInfo> {
   const current = await getVersion().catch(() => "0.0.0");
@@ -159,6 +200,13 @@ export async function checkForUpdate(): Promise<UpdateInfo> {
     portalError = String(error);
   }
 
+  // 二级保障：若 Rust 内部异常，前端直接通过 fetch 访问软件中心
+  const directPortal = await checkPortalDirect(current);
+  if (directPortal) {
+    return directPortal;
+  }
+
+  // 兜底：仅在软件中心彻底无法连接时才查 GitHub
   const github = await checkGithub(current);
   if (github) return { ...github, installKind: "portable" };
 

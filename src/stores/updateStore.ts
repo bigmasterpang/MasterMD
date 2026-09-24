@@ -66,11 +66,12 @@ export const useUpdateStore = create<UpdateState>((set, get) => ({
     try {
       const info = await checkForUpdate();
       set({ info, checking: false });
-      if (info.hasUpdate && !get().notified) {
-        set({ notified: true, dialogVisible: true });
-      }
-      if (!options.silent && !info.hasUpdate) {
+      if (!options.silent) {
+        // 用户主动点击：始终弹出对话框显示结果（修复第二次点击不弹窗的 BUG）
         set({ dialogVisible: true });
+      } else if (info.hasUpdate && !get().notified) {
+        // 后台静默自动检查：只在有更新且未提示过时弹窗
+        set({ notified: true, dialogVisible: true });
       }
     } catch (error) {
       set({ checking: false, error: String(error) });
@@ -126,7 +127,7 @@ export const useUpdateStore = create<UpdateState>((set, get) => ({
       });
 
       // 根据安装类型分流：安装版走静默安装脚本；若无标记但文件名匹配 setup.exe 兼容走向导；绿色版走自替换
-      if (info.installKind === "installed") {
+      if (info.installKind === "installed" || info.installKind === "installer") {
         await get().applyInstallerUpdate();
       } else if (/setup\.exe$/i.test(info.filename ?? "")) {
         await get().runInstaller();
