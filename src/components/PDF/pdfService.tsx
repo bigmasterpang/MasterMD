@@ -313,6 +313,7 @@ export async function rotatePdfPage(docId: string, pageNum: number, clockwise = 
     useAppStore.getState().patchDoc(docId, {
       pdfBase64: newBase64,
       cleanPdfBase64: newBase64,
+      pdfCurrentPage: pageNum,
       isDirty: true,
     });
   } catch (err: any) {
@@ -339,6 +340,7 @@ export async function rotateAllPdfPages(docId: string, clockwise = true) {
     useAppStore.getState().patchDoc(docId, {
       pdfBase64: newBase64,
       cleanPdfBase64: newBase64,
+      pdfCurrentPage: doc.pdfCurrentPage ?? 1,
       isDirty: true,
     });
   } catch (err: any) {

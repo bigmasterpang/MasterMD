@@ -61,6 +61,16 @@ interface PageContextMenuState {
   yPercent: number;
 }
 
+const SCALE_PRESETS = [
+  { label: "50%", value: 0.5 },
+  { label: "75%", value: 0.75 },
+  { label: "100%", value: 1.0 },
+  { label: "125%", value: 1.25 },
+  { label: "150%", value: 1.5 },
+  { label: "200%", value: 2.0 },
+  { label: "300%", value: 3.0 },
+];
+
 export function PdfViewer({ docId, isDark }: PdfViewerProps) {
   const doc = useAppStore((s) => s.docs.find((d) => d.id === docId) ?? null);
   const outlineVisible = useAppStore((s) => s.outlineVisible);
@@ -71,8 +81,11 @@ export function PdfViewer({ docId, isDark }: PdfViewerProps) {
   const [currentPage, setCurrentPage] = useState(1);
   const [scale, setScale] = useState<number>(1.2);
   const [fitMode, setFitMode] = useState<"custom" | "width" | "page">("width");
-  const [showThemeMenu, setShowThemeMenu] = useState(false);
   const [activeNoteId, setActiveNoteId] = useState<string | null>(null);
+
+  // 浮层菜单位置状态（采用 fixed 坐标，避免被工具栏截断）
+  const [themeMenuPos, setThemeMenuPos] = useState<{ left: number; top: number } | null>(null);
+  const [scaleMenuPos, setScaleMenuPos] = useState<{ left: number; top: number } | null>(null);
 
   // 右键菜单状态
   const [selectionMenu, setSelectionMenu] = useState<PdfSelectionMenuState | null>(null);
@@ -81,7 +94,13 @@ export function PdfViewer({ docId, isDark }: PdfViewerProps) {
 
   const containerRef = useRef<HTMLDivElement>(null);
   const pageRefs = useRef<Map<number, HTMLDivElement>>(new Map());
+  const themeBtnRef = useRef<HTMLButtonElement>(null);
   const themeDropdownRef = useRef<HTMLDivElement>(null);
+  const scaleBtnRef = useRef<HTMLButtonElement>(null);
+  const scaleDropdownRef = useRef<HTMLDivElement>(null);
+
+  // 重载后保持当前页锚定
+  const targetPageAfterReload = useRef<number | null>(null);
 
   const pdfBase64 = doc?.pdfBase64 ?? "";
   const docName = doc?.filePath ? fileName(doc.filePath) : "PDF 文档";
@@ -93,11 +112,23 @@ export function PdfViewer({ docId, isDark }: PdfViewerProps) {
     [paperTheme],
   );
 
-  // 点击外部关闭底色下拉框
+  // 点击外部关闭弹出层菜单
   useEffect(() => {
     const handleClickOutside = (e: MouseEvent) => {
-      if (themeDropdownRef.current && !themeDropdownRef.current.contains(e.target as Node)) {
-        setShowThemeMenu(false);
+      const target = e.target as Node;
+      if (
+        themeDropdownRef.current &&
+        !themeDropdownRef.current.contains(target) &&
+        !themeBtnRef.current?.contains(target)
+      ) {
+        setThemeMenuPos(null);
+      }
+      if (
+        scaleDropdownRef.current &&
+        !scaleDropdownRef.current.contains(target) &&
+        !scaleBtnRef.current?.contains(target)
+      ) {
+        setScaleMenuPos(null);
       }
     };
     window.addEventListener("mousedown", handleClickOutside);
@@ -136,9 +167,18 @@ export function PdfViewer({ docId, isDark }: PdfViewerProps) {
         const proxy = await loadingTask.promise;
         setPdfProxy(proxy);
         setNumPages(proxy.numPages);
+
+        // 关键修复：重载或旋转时保留用户当前的页码，而不是重置到第 1 页
+        const existingDoc = useAppStore.getState().docs.find((d) => d.id === docId);
+        const keepPage =
+          targetPageAfterReload.current || existingDoc?.pdfCurrentPage || currentPage || 1;
+        const safePage = Math.min(proxy.numPages, Math.max(1, keepPage));
+        setCurrentPage(safePage);
+        targetPageAfterReload.current = null;
+
         useAppStore.getState().patchDoc(docId, {
           pdfTotalPages: proxy.numPages,
-          pdfCurrentPage: 1,
+          pdfCurrentPage: safePage,
         });
 
         // 提取大纲书签
@@ -194,6 +234,32 @@ export function PdfViewer({ docId, isDark }: PdfViewerProps) {
       unregisterPdfDocument(docId);
     };
   }, [loadPdf, docId]);
+
+  // 跳转到指定页面（直接、瞬时直达，避免冗长缓动翻页）
+  const scrollToPage = useCallback(
+    (pageNum: number) => {
+      const safePage = Math.max(1, Math.min(numPages, pageNum));
+      const targetEl = pageRefs.current.get(safePage);
+      const container = containerRef.current;
+      if (targetEl && container) {
+        const containerRect = container.getBoundingClientRect();
+        const targetRect = targetEl.getBoundingClientRect();
+        container.scrollTop += targetRect.top - containerRect.top - 16;
+        setCurrentPage(safePage);
+        useAppStore.getState().patchDoc(docId, { pdfCurrentPage: safePage });
+      }
+    },
+    [numPages, docId],
+  );
+
+  // 旋转或重载后自动重新定位回当前所在页
+  useEffect(() => {
+    if (!pdfProxy || currentPage <= 1) return;
+    const timer = setTimeout(() => {
+      scrollToPage(currentPage);
+    }, 60);
+    return () => clearTimeout(timer);
+  }, [pdfProxy, scrollToPage]);
 
   // 适应页面宽度计算
   const updateFitWidth = useCallback(async () => {
@@ -261,23 +327,6 @@ export function PdfViewer({ docId, isDark }: PdfViewerProps) {
     }
   };
 
-  // 跳转到指定页面（直接、瞬时直达，避免冗长缓动翻页）
-  const scrollToPage = useCallback(
-    (pageNum: number) => {
-      const safePage = Math.max(1, Math.min(numPages, pageNum));
-      const targetEl = pageRefs.current.get(safePage);
-      const container = containerRef.current;
-      if (targetEl && container) {
-        const containerRect = container.getBoundingClientRect();
-        const targetRect = targetEl.getBoundingClientRect();
-        container.scrollTop += (targetRect.top - containerRect.top - 16);
-        setCurrentPage(safePage);
-        useAppStore.getState().patchDoc(docId, { pdfCurrentPage: safePage });
-      }
-    },
-    [numPages, docId],
-  );
-
   // 监听来自全局侧边栏的跳转事件
   useEffect(() => {
     const handler = (e: any) => {
@@ -332,7 +381,7 @@ export function PdfViewer({ docId, isDark }: PdfViewerProps) {
     const pageRect = pageEl ? pageEl.getBoundingClientRect() : null;
 
     if (text.length > 0 && clientRects.length > 0) {
-      // 1. 划词选区模式：弹出复制与高亮菜单
+      // 1. 划词选区模式：弹出复制、添加注释、高亮菜单
       e.preventDefault();
       setPageContextMenu(null);
       setSelectionMenu({
@@ -366,7 +415,7 @@ export function PdfViewer({ docId, isDark }: PdfViewerProps) {
     }
   };
 
-  // 划词选区右键菜单
+  // 划词选区右键菜单（支持复制、针对选中文本添加注释、以及多种高亮）
   const selectionMenuGroups = useMemo<ContextMenuItem[][]>(() => {
     if (!selectionMenu) return [];
     const pageHls = (doc?.pdfHighlights ?? []).filter((h) => h.page === selectionMenu.pageNum);
@@ -383,6 +432,28 @@ export function PdfViewer({ docId, isDark }: PdfViewerProps) {
               await navigator.clipboard.writeText(selectionMenu.selectedText);
             }
             setSelectionMenu(null);
+          },
+        },
+        {
+          label: "为此文本添加注释",
+          icon: "message-square" as any,
+          onClick: () => {
+            if (selectionMenu.pageRect && selectionMenu.clientRects.length > 0) {
+              const firstRect = selectionMenu.clientRects[0];
+              const pRect = selectionMenu.pageRect;
+              const xP = Math.max(2, Math.min(95, ((firstRect.left - pRect.left) / pRect.width) * 100));
+              const yP = Math.max(2, Math.min(95, ((firstRect.top - pRect.top) / pRect.height) * 100));
+
+              const quoteText =
+                selectionMenu.selectedText.length > 60
+                  ? `“${selectionMenu.selectedText.slice(0, 60)}…”\n`
+                  : `“${selectionMenu.selectedText}”\n`;
+
+              const newNote = addPdfNote(docId, selectionMenu.pageNum, xP, yP, quoteText);
+              setActiveNoteId(newNote.id);
+              window.getSelection()?.removeAllRanges();
+              setSelectionMenu(null);
+            }
           },
         },
       ],
@@ -542,7 +613,10 @@ export function PdfViewer({ docId, isDark }: PdfViewerProps) {
             if (canvas) {
               const ok = await copyCanvasToClipboard(canvas);
               if (ok) {
-                await showMessage("复制成功", `第 ${pNum} 页已作为高清晰度 PNG 图片复制到剪贴板，可直接在微信、文档中粘贴。`);
+                await showMessage(
+                  "复制成功",
+                  `第 ${pNum} 页已作为高清晰度 PNG 图片复制到剪贴板，可直接在微信、文档中粘贴。`,
+                );
               } else {
                 await showMessage("复制失败", "无法将页面图像写入系统剪贴板。");
               }
@@ -564,6 +638,7 @@ export function PdfViewer({ docId, isDark }: PdfViewerProps) {
           icon: "rotate-cw",
           onClick: () => {
             setPageContextMenu(null);
+            targetPageAfterReload.current = pNum;
             void rotatePdfPage(docId, pNum, true);
           },
         },
@@ -608,8 +683,8 @@ export function PdfViewer({ docId, isDark }: PdfViewerProps) {
 
   return (
     <div className="relative flex h-full w-full flex-col overflow-hidden bg-panel">
-      {/* PDF 顶置工具栏 */}
-      <div className="flex h-9 shrink-0 items-center justify-between gap-1 border-b border-line bg-panel px-2 text-[12px] text-muted overflow-x-auto overflow-y-hidden scrollbar-none">
+      {/* PDF 顶置工具栏（使用 overflow-visible 保证下拉浮窗正常显示） */}
+      <div className="flex h-9 shrink-0 items-center justify-between gap-1 border-b border-line bg-panel px-2 text-[12px] text-muted relative z-20">
         {/* 左侧：侧栏切换 & 页码跳转 */}
         <div className="flex shrink-0 items-center gap-1">
           <button
@@ -661,7 +736,7 @@ export function PdfViewer({ docId, isDark }: PdfViewerProps) {
           </button>
         </div>
 
-        {/* 中间：缩放控制 & 自定义阅读底色切换器 */}
+        {/* 中间：缩放控制（支持弹出百分比选项及自适应） & 自定义阅读底色切换器 */}
         <div className="flex shrink-0 items-center gap-1">
           <button
             type="button"
@@ -676,16 +751,25 @@ export function PdfViewer({ docId, isDark }: PdfViewerProps) {
             <Icon name="zoom-out" size={14} className="shrink-0" />
           </button>
 
-          <span
-            className="min-w-[42px] shrink-0 text-center font-mono text-[11.5px] text-fg/85 cursor-pointer hover:text-accent whitespace-nowrap"
-            title="点击重置为 100%"
+          {/* 交互式缩放百分比菜单按钮 */}
+          <button
+            ref={scaleBtnRef}
+            type="button"
+            title="点击选择缩放比例或页面自适应"
             onClick={() => {
-              setFitMode("custom");
-              setScale(1.0);
+              if (scaleMenuPos) {
+                setScaleMenuPos(null);
+              } else if (scaleBtnRef.current) {
+                const rect = scaleBtnRef.current.getBoundingClientRect();
+                setScaleMenuPos({ left: rect.left, top: rect.bottom + 4 });
+                setThemeMenuPos(null);
+              }
             }}
+            className="flex h-7 shrink-0 items-center gap-0.5 rounded px-1.5 font-mono text-[11.5px] text-fg/90 hover:bg-hover hover:text-accent transition-colors"
           >
-            {Math.round(scale * 100)}%
-          </span>
+            <span>{Math.round(scale * 100)}%</span>
+            <Icon name="chevron-down" size={10} className="opacity-60" />
+          </button>
 
           <button
             type="button"
@@ -733,13 +817,22 @@ export function PdfViewer({ docId, isDark }: PdfViewerProps) {
           <div className="mx-1 h-4 w-px shrink-0 bg-line" />
 
           {/* 自定义阅读底色切换器（置于中间，提供多个颜色选项，防止蓝块填满） */}
-          <div className="relative" ref={themeDropdownRef}>
+          <div>
             <button
+              ref={themeBtnRef}
               type="button"
               title="切换阅读底色（护眼舒适）"
-              onClick={() => setShowThemeMenu((prev) => !prev)}
+              onClick={() => {
+                if (themeMenuPos) {
+                  setThemeMenuPos(null);
+                } else if (themeBtnRef.current) {
+                  const rect = themeBtnRef.current.getBoundingClientRect();
+                  setThemeMenuPos({ left: rect.left, top: rect.bottom + 4 });
+                  setScaleMenuPos(null);
+                }
+              }}
               className={`flex h-7 shrink-0 items-center gap-1.5 rounded px-2 text-[11.5px] transition-colors ${
-                showThemeMenu ? "bg-hover text-fg" : "hover:bg-hover hover:text-fg"
+                themeMenuPos ? "bg-hover text-fg" : "hover:bg-hover hover:text-fg"
               }`}
             >
               <span
@@ -749,37 +842,6 @@ export function PdfViewer({ docId, isDark }: PdfViewerProps) {
               <span className="whitespace-nowrap text-fg/90">{activePaperTheme.name}</span>
               <Icon name="chevron-down" size={11} className="opacity-60 shrink-0" />
             </button>
-
-            {showThemeMenu && (
-              <div className="absolute left-0 top-full z-50 mt-1 min-w-[145px] rounded-lg border border-line bg-elevated p-1 shadow-lg backdrop-blur-md">
-                <div className="px-2 py-1 text-[10.5px] font-medium text-faint">选择阅读底色</div>
-                {PDF_PAPER_THEMES.map((theme) => {
-                  const isSel = theme.id === activePaperTheme.id;
-                  return (
-                    <button
-                      key={theme.id}
-                      type="button"
-                      onClick={() => {
-                        useAppStore.getState().patchDoc(docId, { pdfPaperTheme: theme.id });
-                        setShowThemeMenu(false);
-                      }}
-                      className={`flex w-full items-center justify-between gap-2 rounded px-2 py-1.5 text-left text-[11.5px] transition-colors ${
-                        isSel ? "bg-accent/15 font-medium text-accent" : "hover:bg-hover hover:text-fg"
-                      }`}
-                    >
-                      <div className="flex items-center gap-2">
-                        <span
-                          className="h-3.5 w-3.5 rounded-full border border-line shrink-0"
-                          style={{ backgroundColor: theme.preview }}
-                        />
-                        <span>{theme.name}</span>
-                      </div>
-                      {isSel && <Icon name="check" size={12} className="text-accent" />}
-                    </button>
-                  );
-                })}
-              </div>
-            )}
           </div>
         </div>
 
@@ -788,7 +850,10 @@ export function PdfViewer({ docId, isDark }: PdfViewerProps) {
           <button
             type="button"
             title="顺时针旋转当前页 90°"
-            onClick={() => rotatePdfPage(docId, currentPage, true)}
+            onClick={() => {
+              targetPageAfterReload.current = currentPage;
+              void rotatePdfPage(docId, currentPage, true);
+            }}
             className="flex h-7 shrink-0 whitespace-nowrap items-center gap-1 rounded px-1.5 hover:bg-hover hover:text-fg"
           >
             <Icon name="rotate-cw" size={13} className="shrink-0" />
@@ -798,7 +863,10 @@ export function PdfViewer({ docId, isDark }: PdfViewerProps) {
           <button
             type="button"
             title="顺时针旋转全部页面 90°"
-            onClick={() => rotateAllPdfPages(docId, true)}
+            onClick={() => {
+              targetPageAfterReload.current = currentPage;
+              void rotateAllPdfPages(docId, true);
+            }}
             className="flex h-7 shrink-0 whitespace-nowrap items-center gap-1 rounded px-1.5 hover:bg-hover hover:text-fg"
           >
             <Icon name="rotate-cw" size={13} className="shrink-0" />
@@ -826,6 +894,102 @@ export function PdfViewer({ docId, isDark }: PdfViewerProps) {
           </button>
         </div>
       </div>
+
+      {/* 缩放比例下拉弹窗（使用 fixed 定位，绝无遮挡） */}
+      {scaleMenuPos && (
+        <div
+          ref={scaleDropdownRef}
+          style={{ left: `${scaleMenuPos.left}px`, top: `${scaleMenuPos.top}px` }}
+          className="fixed z-[300] min-w-[136px] rounded-lg border border-line bg-elevated p-1 shadow-2xl backdrop-blur-md"
+        >
+          <div className="px-2 py-1 text-[10.5px] font-medium text-faint">缩放比例</div>
+          {SCALE_PRESETS.map((opt) => {
+            const isSel = fitMode === "custom" && Math.abs(scale - opt.value) < 0.04;
+            return (
+              <button
+                key={opt.value}
+                type="button"
+                onClick={() => {
+                  setFitMode("custom");
+                  setScale(opt.value);
+                  setScaleMenuPos(null);
+                }}
+                className={`flex w-full items-center justify-between rounded px-2 py-1 text-left font-mono text-[11.5px] transition-colors ${
+                  isSel ? "bg-accent/15 font-semibold text-accent" : "hover:bg-hover hover:text-fg"
+                }`}
+              >
+                <span>{opt.label}</span>
+                {isSel && <Icon name="check" size={12} className="text-accent" />}
+              </button>
+            );
+          })}
+          <div className="my-1 h-px bg-line/60" />
+          <button
+            type="button"
+            onClick={() => {
+              setFitMode("width");
+              void updateFitWidth();
+              setScaleMenuPos(null);
+            }}
+            className={`flex w-full items-center justify-between rounded px-2 py-1 text-left text-[11.5px] transition-colors ${
+              fitMode === "width" ? "bg-accent/15 font-semibold text-accent" : "hover:bg-hover hover:text-fg"
+            }`}
+          >
+            <span>适合页宽</span>
+            {fitMode === "width" && <Icon name="check" size={12} className="text-accent" />}
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setFitMode("page");
+              void updateFitPage();
+              setScaleMenuPos(null);
+            }}
+            className={`flex w-full items-center justify-between rounded px-2 py-1 text-left text-[11.5px] transition-colors ${
+              fitMode === "page" ? "bg-accent/15 font-semibold text-accent" : "hover:bg-hover hover:text-fg"
+            }`}
+          >
+            <span>适合整页</span>
+            {fitMode === "page" && <Icon name="check" size={12} className="text-accent" />}
+          </button>
+        </div>
+      )}
+
+      {/* 阅读底色切换下拉弹窗（使用 fixed 定位，绝无遮挡） */}
+      {themeMenuPos && (
+        <div
+          ref={themeDropdownRef}
+          style={{ left: `${themeMenuPos.left}px`, top: `${themeMenuPos.top}px` }}
+          className="fixed z-[300] min-w-[150px] rounded-lg border border-line bg-elevated p-1 shadow-2xl backdrop-blur-md"
+        >
+          <div className="px-2 py-1 text-[10.5px] font-medium text-faint">选择阅读底色</div>
+          {PDF_PAPER_THEMES.map((theme) => {
+            const isSel = theme.id === activePaperTheme.id;
+            return (
+              <button
+                key={theme.id}
+                type="button"
+                onClick={() => {
+                  useAppStore.getState().patchDoc(docId, { pdfPaperTheme: theme.id });
+                  setThemeMenuPos(null);
+                }}
+                className={`flex w-full items-center justify-between gap-2 rounded px-2 py-1.5 text-left text-[11.5px] transition-colors ${
+                  isSel ? "bg-accent/15 font-medium text-accent" : "hover:bg-hover hover:text-fg"
+                }`}
+              >
+                <div className="flex items-center gap-2">
+                  <span
+                    className="h-3.5 w-3.5 rounded-full border border-line shrink-0"
+                    style={{ backgroundColor: theme.preview }}
+                  />
+                  <span>{theme.name}</span>
+                </div>
+                {isSel && <Icon name="check" size={12} className="text-accent" />}
+              </button>
+            );
+          })}
+        </div>
+      )}
 
       {/* 主视口区域：页面画布渲染流 */}
       <div
@@ -865,7 +1029,8 @@ export function PdfViewer({ docId, isDark }: PdfViewerProps) {
                   else pageRefs.current.delete(pNum);
                 }}
                 data-page-number={pNum}
-                className="relative rounded shadow-lg bg-white overflow-hidden transition-shadow"
+                style={{ backgroundColor: activePaperTheme.color }}
+                className="relative rounded shadow-lg transition-shadow"
               >
                 <PdfPage
                   pdfProxy={pdfProxy}
@@ -1067,7 +1232,7 @@ function PdfPage({
         width: `${cssWidth}px`,
         height: `${cssHeight}px`,
       }}
-      className="relative flex items-center justify-center bg-white shadow-xs"
+      className="relative flex items-center justify-center shadow-xs"
     >
       {isVisible ? (
         <>
@@ -1159,7 +1324,7 @@ function PdfPage({
         </>
       ) : (
         /* 视口外虚拟骨架占位 */
-        <div className="flex h-full w-full items-center justify-center text-[12px] text-faint bg-white">
+        <div className="flex h-full w-full items-center justify-center text-[12px] text-faint">
           <span className="font-mono opacity-40">第 {pageNum} 页</span>
         </div>
       )}
@@ -1167,7 +1332,7 @@ function PdfPage({
   );
 }
 
-/** 交互式便签附注图钉与卡片组件 */
+/** 交互式便签附注图钉与卡片组件（智能方位避让，杜绝遮挡截断） */
 function PdfNoteMarker({
   note,
   docId,
@@ -1197,19 +1362,19 @@ function PdfNoteMarker({
   const colorStyles = {
     yellow: {
       marker: "bg-amber-400 text-amber-950 border-amber-500 hover:bg-amber-300",
-      card: "border-amber-300 bg-amber-50 dark:bg-neutral-900",
+      card: "border-amber-300 bg-amber-50 text-neutral-900 dark:bg-neutral-900 dark:text-neutral-100 dark:border-amber-700/60",
     },
     blue: {
       marker: "bg-sky-400 text-sky-950 border-sky-500 hover:bg-sky-300",
-      card: "border-sky-300 bg-sky-50 dark:bg-neutral-900",
+      card: "border-sky-300 bg-sky-50 text-neutral-900 dark:bg-neutral-900 dark:text-neutral-100 dark:border-sky-700/60",
     },
     green: {
       marker: "bg-emerald-400 text-emerald-950 border-emerald-500 hover:bg-emerald-300",
-      card: "border-emerald-300 bg-emerald-50 dark:bg-neutral-900",
+      card: "border-emerald-300 bg-emerald-50 text-neutral-900 dark:bg-neutral-900 dark:text-neutral-100 dark:border-emerald-700/60",
     },
     purple: {
       marker: "bg-purple-400 text-purple-950 border-purple-500 hover:bg-purple-300",
-      card: "border-purple-300 bg-purple-50 dark:bg-neutral-900",
+      card: "border-purple-300 bg-purple-50 text-neutral-900 dark:bg-neutral-900 dark:text-neutral-100 dark:border-purple-700/60",
     },
   }[note.color || "yellow"];
 
@@ -1218,6 +1383,14 @@ function PdfNoteMarker({
       updatePdfNote(docId, note.id, { content });
     }
   };
+
+  // 关键优化：智能方位避让判定。若图钉位于页面右侧（>50%），便签卡片向左内侧展开；若位于底部（>65%），卡片向上展开
+  const isRightSide = note.xPercent > 50;
+  const isBottomSide = note.yPercent > 65;
+
+  const cardPosClass = `${isRightSide ? "right-2" : "left-2"} ${
+    isBottomSide ? "bottom-2" : "top-2"
+  }`;
 
   return (
     <div
@@ -1239,10 +1412,10 @@ function PdfNoteMarker({
         <Icon name="pin" size={13} strokeWidth={2.2} />
       </button>
 
-      {/* 展开的便签卡片 */}
+      {/* 展开的便签卡片（带避让定位、超高层级与立体阴影） */}
       {isOpen && (
         <div
-          className={`absolute left-4 top-4 z-50 w-64 rounded-lg border p-3 shadow-xl backdrop-blur-md ${colorStyles.card}`}
+          className={`absolute ${cardPosClass} z-50 w-64 rounded-lg border p-3 shadow-2xl backdrop-blur-md ${colorStyles.card}`}
           onClick={(e) => e.stopPropagation()}
         >
           <div className="flex items-center justify-between pb-1.5 border-b border-line/60">
