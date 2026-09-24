@@ -96,6 +96,25 @@ export interface DocState {
   pdfScale?: number | "width" | "page";
   /** PDF 密码（如果是密码加密文件） */
   pdfPassword?: string;
+  /** PDF 基础纯净数据（Base64，未绘制可撤销高亮） */
+  cleanPdfBase64?: string;
+  /** PDF 动态高亮标注列表（可新增、删除、清除） */
+  pdfHighlights?: PdfHighlight[];
+}
+
+/** PDF 动态高亮矩形标注 */
+export interface PdfHighlight {
+  id: string;
+  page: number;
+  rects: Array<{
+    xPercent: number;
+    yPercent: number;
+    wPercent: number;
+    hPercent: number;
+  }>;
+  color: "yellow" | "green" | "pink";
+  text?: string;
+  createdAt: number;
 }
 
 /** 双栏文档布局状态 */

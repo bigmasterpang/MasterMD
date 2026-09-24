@@ -4,6 +4,7 @@ import { openUrl } from "@tauri-apps/plugin-opener";
 import { createDoc, docFromPayload, getActiveDoc, getDocById, useAppStore } from "../stores/appStore";
 import { askConfirm, askUnsaved, showMessage } from "../stores/dialogStore";
 import type { BinaryPayload, FilePayload } from "../types";
+import { burnHighlightsToPdf } from "../components/PDF/pdfService";
 import {
   EMPTY_DOC_PLACEHOLDER,
   LARGE_FILE_BYTES,
@@ -120,6 +121,8 @@ export async function openPath(path: string): Promise<boolean> {
         docType: "pdf",
         pdfBase64: payload.dataBase64,
         savedPdfBase64: payload.dataBase64,
+        cleanPdfBase64: payload.dataBase64,
+        pdfHighlights: [],
         modifiedAt: payload.modifiedAt,
         size: payload.size,
         encrypted: payload.encrypted ?? false,
@@ -265,17 +268,22 @@ export async function saveDoc(id: string): Promise<boolean> {
     markSelfWrite();
     if (doc.docType === "pdf" || isPdfPath(doc.filePath)) {
       if (!doc.pdfBase64) return false;
+      let base64ToWrite = doc.cleanPdfBase64 || doc.pdfBase64;
+      if (doc.pdfHighlights && doc.pdfHighlights.length > 0) {
+        base64ToWrite = await burnHighlightsToPdf(base64ToWrite, doc.pdfHighlights);
+      }
       const modifiedAt = await invoke<number>("write_binary_file", {
         path: doc.filePath,
-        base64: doc.pdfBase64,
+        base64: base64ToWrite,
         encryptedHeader: doc.encryptedHeader,
       });
       markSelfWrite();
       useAppStore.getState().patchDoc(id, {
-        savedPdfBase64: doc.pdfBase64,
+        pdfBase64: base64ToWrite,
+        savedPdfBase64: base64ToWrite,
         isDirty: false,
         modifiedAt,
-        size: (doc.encrypted ? 4096 : 0) + Math.floor((doc.pdfBase64.length * 3) / 4),
+        size: (doc.encrypted ? 4096 : 0) + Math.floor((base64ToWrite.length * 3) / 4),
       });
       void addRecentFile(doc.filePath);
       return true;
@@ -321,9 +329,13 @@ export async function saveDocAs(id: string): Promise<boolean> {
 
     if (isPdf) {
       if (!doc.pdfBase64) return false;
+      let base64ToWrite = doc.cleanPdfBase64 || doc.pdfBase64;
+      if (doc.pdfHighlights && doc.pdfHighlights.length > 0) {
+        base64ToWrite = await burnHighlightsToPdf(base64ToWrite, doc.pdfHighlights);
+      }
       const modifiedAt = await invoke<number>("write_binary_file", {
         path: target,
-        base64: doc.pdfBase64,
+        base64: base64ToWrite,
         encryptedHeader: doc.encryptedHeader,
       });
       markSelfWrite();
@@ -331,10 +343,12 @@ export async function saveDocAs(id: string): Promise<boolean> {
       useAppStore.getState().patchDoc(id, {
         filePath: target,
         docType: "pdf",
-        savedPdfBase64: doc.pdfBase64,
+        pdfBase64: base64ToWrite,
+        savedPdfBase64: base64ToWrite,
+        cleanPdfBase64: doc.cleanPdfBase64 || doc.pdfBase64,
         isDirty: false,
         readOnly: false,
-        size: (doc.encrypted ? 4096 : 0) + Math.floor((doc.pdfBase64.length * 3) / 4),
+        size: (doc.encrypted ? 4096 : 0) + Math.floor((base64ToWrite.length * 3) / 4),
         modifiedAt,
       });
       if (oldPath && !samePath(oldPath, target)) void unwatchFile(oldPath);

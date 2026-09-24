@@ -5,6 +5,7 @@ import { useAppStore } from "../../stores/appStore";
 import { askConfirm, showMessage } from "../../stores/dialogStore";
 import { fileName } from "../../utils/filePath";
 import { invoke } from "@tauri-apps/api/core";
+import type { PdfHighlight } from "../../types";
 
 export interface OutlineItem {
   title: string;
@@ -91,6 +92,121 @@ export function jumpToPdfPage(docId: string, pageNum: number) {
   useAppStore.getState().patchDoc(docId, { pdfCurrentPage: pageNum });
 }
 
+/* ---------------- PDF 高亮标注（动态、可撤销/取消） ---------------- */
+
+/** 添加高亮标注 */
+export function addPdfHighlight(
+  docId: string,
+  pageNum: number,
+  clientRects: DOMRect[],
+  pageBoundingRect: DOMRect,
+  colorType: "yellow" | "green" | "pink" = "yellow",
+  text?: string,
+) {
+  const doc = useAppStore.getState().docs.find((d) => d.id === docId);
+  if (!doc) return;
+
+  const rects: Array<{ xPercent: number; yPercent: number; wPercent: number; hPercent: number }> = [];
+  for (const r of clientRects) {
+    if (r.width <= 0 || r.height <= 0) continue;
+    const xPercent = Math.max(0, ((r.left - pageBoundingRect.left) / pageBoundingRect.width) * 100);
+    const yPercent = Math.max(0, ((r.top - pageBoundingRect.top) / pageBoundingRect.height) * 100);
+    const wPercent = Math.min(100, (r.width / pageBoundingRect.width) * 100);
+    const hPercent = Math.min(100, (r.height / pageBoundingRect.height) * 100);
+    rects.push({ xPercent, yPercent, wPercent, hPercent });
+  }
+
+  if (rects.length === 0) return;
+
+  const newHighlight: PdfHighlight = {
+    id: `hl-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`,
+    page: pageNum,
+    rects,
+    color: colorType,
+    text,
+    createdAt: Date.now(),
+  };
+
+  const existing = doc.pdfHighlights ?? [];
+  useAppStore.getState().patchDoc(docId, {
+    pdfHighlights: [...existing, newHighlight],
+    isDirty: true,
+  });
+}
+
+/** 移除单个高亮标注（支持撤销/取消） */
+export function removePdfHighlight(docId: string, highlightId: string) {
+  const doc = useAppStore.getState().docs.find((d) => d.id === docId);
+  if (!doc || !doc.pdfHighlights) return;
+  useAppStore.getState().patchDoc(docId, {
+    pdfHighlights: doc.pdfHighlights.filter((h) => h.id !== highlightId),
+    isDirty: true,
+  });
+}
+
+/** 清除指定页面的所有高亮标注 */
+export function clearPageHighlights(docId: string, pageNum: number) {
+  const doc = useAppStore.getState().docs.find((d) => d.id === docId);
+  if (!doc || !doc.pdfHighlights) return;
+  useAppStore.getState().patchDoc(docId, {
+    pdfHighlights: doc.pdfHighlights.filter((h) => h.page !== pageNum),
+    isDirty: true,
+  });
+}
+
+/** 清除文档内的所有高亮标注 */
+export function clearAllHighlights(docId: string) {
+  useAppStore.getState().patchDoc(docId, {
+    pdfHighlights: [],
+    isDirty: true,
+  });
+}
+
+/** 保存时将高亮矩形真正烘焙绘制入 PDF 二进制中 */
+export async function burnHighlightsToPdf(
+  base64Data: string,
+  highlights: PdfHighlight[],
+): Promise<string> {
+  if (!highlights || highlights.length === 0) return base64Data;
+  try {
+    const rawBytes = base64ToBytes(base64Data);
+    const pdfDoc = await PDFDocument.load(rawBytes, { ignoreEncryption: true });
+    const numPages = pdfDoc.getPageCount();
+
+    const colorMap = {
+      yellow: rgb(1, 0.92, 0.23),
+      green: rgb(0.3, 0.9, 0.4),
+      pink: rgb(1, 0.45, 0.75),
+    };
+
+    for (const hl of highlights) {
+      if (hl.page < 1 || hl.page > numPages) continue;
+      const page = pdfDoc.getPage(hl.page - 1);
+      const { width, height } = page.getSize();
+      const rotation = page.getRotation().angle;
+      const drawColor = colorMap[hl.color] || colorMap.yellow;
+
+      for (const r of hl.rects) {
+        const pdfRect = mapVisualToPdfRect(r, width, height, rotation);
+        page.drawRectangle({
+          x: pdfRect.x,
+          y: pdfRect.y,
+          width: pdfRect.width,
+          height: pdfRect.height,
+          color: drawColor,
+          opacity: 0.38,
+        });
+      }
+    }
+
+    const newBytes = await pdfDoc.save();
+    return bytesToBase64(newBytes);
+  } catch (err) {
+    console.error("绘制高亮矩形失败", err);
+    return base64Data;
+  }
+}
+
 /* ---------------- PDF 编辑操作 ---------------- */
 
 /** 旋转指定页面（顺时针/逆时针 90 度） */
@@ -109,6 +225,7 @@ export async function rotatePdfPage(docId: string, pageNum: number, clockwise = 
     const newBase64 = bytesToBase64(newBytes);
     useAppStore.getState().patchDoc(docId, {
       pdfBase64: newBase64,
+      cleanPdfBase64: newBase64,
       isDirty: true,
     });
   } catch (err: any) {
@@ -134,6 +251,7 @@ export async function rotateAllPdfPages(docId: string, clockwise = true) {
     const newBase64 = bytesToBase64(newBytes);
     useAppStore.getState().patchDoc(docId, {
       pdfBase64: newBase64,
+      cleanPdfBase64: newBase64,
       isDirty: true,
     });
   } catch (err: any) {
@@ -165,8 +283,16 @@ export async function deletePdfPage(docId: string, pageNum: number) {
 
     const newBytes = await pdfDoc.save();
     const newBase64 = bytesToBase64(newBytes);
+
+    // 重新映射受影响的高亮标注页码
+    const updatedHighlights = (doc.pdfHighlights ?? [])
+      .filter((h) => h.page !== pageNum)
+      .map((h) => (h.page > pageNum ? { ...h, page: h.page - 1 } : h));
+
     useAppStore.getState().patchDoc(docId, {
       pdfBase64: newBase64,
+      cleanPdfBase64: newBase64,
+      pdfHighlights: updatedHighlights,
       isDirty: true,
       pdfTotalPages: numPages - 1,
       pdfCurrentPage: Math.min(doc.pdfCurrentPage ?? 1, numPages - 1),
@@ -232,6 +358,7 @@ export async function reorderPdfPages(docId: string, fromIndex: number, toIndex:
     const newBase64 = bytesToBase64(newBytes);
     useAppStore.getState().patchDoc(docId, {
       pdfBase64: newBase64,
+      cleanPdfBase64: newBase64,
       isDirty: true,
     });
   } catch (err: any) {
@@ -297,70 +424,7 @@ export function mapVisualToPdfRect(
   }
 }
 
-/** 对选中文字绘制高亮矩形并保存至 PDF 二进制 */
-export async function highlightPdfText(
-  docId: string,
-  pageNum: number,
-  clientRects: DOMRect[],
-  pageBoundingRect: DOMRect,
-  colorType: "yellow" | "green" | "pink" = "yellow",
-): Promise<boolean> {
-  const doc = useAppStore.getState().docs.find((d) => d.id === docId);
-  if (!doc?.pdfBase64 || clientRects.length === 0) return false;
-
-  try {
-    const rawBytes = base64ToBytes(doc.pdfBase64);
-    const pdfDoc = await PDFDocument.load(rawBytes, { ignoreEncryption: true });
-    const page = pdfDoc.getPage(pageNum - 1);
-    const { width, height } = page.getSize();
-    const rotation = page.getRotation().angle;
-
-    const colorMap = {
-      yellow: rgb(1, 0.92, 0.23),
-      green: rgb(0.3, 0.9, 0.4),
-      pink: rgb(1, 0.45, 0.75),
-    };
-    const drawColor = colorMap[colorType] || colorMap.yellow;
-
-    for (const r of clientRects) {
-      if (r.width <= 0 || r.height <= 0) continue;
-      const xPercent = Math.max(0, ((r.left - pageBoundingRect.left) / pageBoundingRect.width) * 100);
-      const yPercent = Math.max(0, ((r.top - pageBoundingRect.top) / pageBoundingRect.height) * 100);
-      const wPercent = Math.min(100, (r.width / pageBoundingRect.width) * 100);
-      const hPercent = Math.min(100, (r.height / pageBoundingRect.height) * 100);
-
-      const pdfRect = mapVisualToPdfRect(
-        { xPercent, yPercent, wPercent, hPercent },
-        width,
-        height,
-        rotation,
-      );
-
-      page.drawRectangle({
-        x: pdfRect.x,
-        y: pdfRect.y,
-        width: pdfRect.width,
-        height: pdfRect.height,
-        color: drawColor,
-        opacity: 0.38,
-      });
-    }
-
-    const newBytes = await pdfDoc.save();
-    const newBase64 = bytesToBase64(newBytes);
-    useAppStore.getState().patchDoc(docId, {
-      pdfBase64: newBase64,
-      isDirty: true,
-    });
-    return true;
-  } catch (err: any) {
-    console.error("高亮失败", err);
-    await showMessage("高亮失败", String(err));
-    return false;
-  }
-}
-
-/* ---------------- 缩略图渲染组件 ---------------- */
+/* ---------------- 缩略图渲染组件（修复黑色背景） ---------------- */
 
 export function PdfThumbnail({
   pdfProxy,
@@ -390,11 +454,15 @@ export function PdfThumbnail({
 
         const canvas = canvasRef.current;
         if (!canvas) return;
-        const context = canvas.getContext("2d", { alpha: false });
+        const context = canvas.getContext("2d");
         if (!context) return;
 
         canvas.width = thumbViewport.width;
         canvas.height = thumbViewport.height;
+
+        // 立即纯白填充，杜绝黑色闪烁
+        context.fillStyle = "#ffffff";
+        context.fillRect(0, 0, canvas.width, canvas.height);
 
         renderTask = page.render({
           canvasContext: context,

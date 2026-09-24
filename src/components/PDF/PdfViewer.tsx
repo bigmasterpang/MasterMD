@@ -8,11 +8,14 @@ import { useAppStore } from "../../stores/appStore";
 import { askPdfPassword } from "../../stores/dialogStore";
 import { fileName } from "../../utils/filePath";
 import {
+  addPdfHighlight,
   base64ToBytes,
+  clearAllHighlights,
+  clearPageHighlights,
   deletePdfPage,
   extractPdfPage,
-  highlightPdfText,
   registerPdfDocument,
+  removePdfHighlight,
   rotateAllPdfPages,
   rotatePdfPage,
   unregisterPdfDocument,
@@ -37,6 +40,13 @@ interface PdfSelectionMenuState {
   pageRect: DOMRect | null;
 }
 
+interface HighlightMenuState {
+  x: number;
+  y: number;
+  highlightId: string;
+  pageNum: number;
+}
+
 export function PdfViewer({ docId, isDark }: PdfViewerProps) {
   const doc = useAppStore((s) => s.docs.find((d) => d.id === docId) ?? null);
   const outlineVisible = useAppStore((s) => s.outlineVisible);
@@ -46,15 +56,25 @@ export function PdfViewer({ docId, isDark }: PdfViewerProps) {
   const [numPages, setNumPages] = useState(0);
   const [currentPage, setCurrentPage] = useState(1);
   const [scale, setScale] = useState<number>(1.2);
+  const [debouncedScale, setDebouncedScale] = useState<number>(1.2);
   const [fitMode, setFitMode] = useState<"custom" | "width" | "page">("width");
   const [invertColors, setInvertColors] = useState(false);
-  const [contextMenu, setContextMenu] = useState<PdfSelectionMenuState | null>(null);
+  const [selectionMenu, setSelectionMenu] = useState<PdfSelectionMenuState | null>(null);
+  const [highlightMenu, setHighlightMenu] = useState<HighlightMenuState | null>(null);
 
   const containerRef = useRef<HTMLDivElement>(null);
   const pageRefs = useRef<Map<number, HTMLDivElement>>(new Map());
 
   const pdfBase64 = doc?.pdfBase64 ?? "";
   const docName = doc?.filePath ? fileName(doc.filePath) : "PDF 文档";
+
+  // 大文档缩放性能优化：对高负载重绘进行 100ms 防抖，滚动缩放时先通过 CSS 缩放，停止滚动后精细渲染
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setDebouncedScale(scale);
+    }, 100);
+    return () => clearTimeout(timer);
+  }, [scale]);
 
   // 加载 PDF 文档
   const loadPdf = useCallback(
@@ -124,7 +144,7 @@ export function PdfViewer({ docId, isDark }: PdfViewerProps) {
           parsedOutline = [];
         }
 
-        // 注册到全局共享服务（供给左侧侧边栏大纲与缩略图渲染）
+        // 注册到全局共享服务
         registerPdfDocument(docId, proxy, parsedOutline);
         setLoading(false);
       } catch (err: any) {
@@ -157,6 +177,7 @@ export function PdfViewer({ docId, isDark }: PdfViewerProps) {
       if (containerWidth > 0 && viewport.width > 0) {
         const newScale = Math.max(0.3, Math.min(3.5, containerWidth / viewport.width));
         setScale(newScale);
+        setDebouncedScale(newScale);
         setFitMode("width");
         useAppStore.getState().patchDoc(docId, { pdfScale: "width" });
       }
@@ -175,6 +196,7 @@ export function PdfViewer({ docId, isDark }: PdfViewerProps) {
       if (containerHeight > 0 && viewport.height > 0) {
         const newScale = Math.max(0.3, Math.min(3.5, containerHeight / viewport.height));
         setScale(newScale);
+        setDebouncedScale(newScale);
         setFitMode("page");
         useAppStore.getState().patchDoc(docId, { pdfScale: "page" });
       }
@@ -264,7 +286,6 @@ export function PdfViewer({ docId, isDark }: PdfViewerProps) {
     const text = selection?.toString()?.trim() || "";
     const range = selection && selection.rangeCount > 0 ? selection.getRangeAt(0) : null;
 
-    // 查找右键点击发生在哪一页
     let targetPage = currentPage;
     let pageEl: HTMLElement | null = null;
     let cur: HTMLElement | null = e.target as HTMLElement;
@@ -283,7 +304,7 @@ export function PdfViewer({ docId, isDark }: PdfViewerProps) {
 
     if (text || clientRects.length > 0) {
       e.preventDefault();
-      setContextMenu({
+      setSelectionMenu({
         x: e.clientX,
         y: e.clientY,
         selectedText: text,
@@ -294,8 +315,12 @@ export function PdfViewer({ docId, isDark }: PdfViewerProps) {
     }
   };
 
-  const contextMenuGroups = useMemo<ContextMenuItem[][]>(() => {
-    if (!contextMenu) return [];
+  // 划词选区右键菜单
+  const selectionMenuGroups = useMemo<ContextMenuItem[][]>(() => {
+    if (!selectionMenu) return [];
+    const pageHls = (doc?.pdfHighlights ?? []).filter((h) => h.page === selectionMenu.pageNum);
+    const hasAnyHls = (doc?.pdfHighlights ?? []).length > 0;
+
     return [
       [
         {
@@ -303,10 +328,10 @@ export function PdfViewer({ docId, isDark }: PdfViewerProps) {
           hint: "Ctrl+C",
           icon: "copy",
           onClick: async () => {
-            if (contextMenu.selectedText) {
-              await navigator.clipboard.writeText(contextMenu.selectedText);
+            if (selectionMenu.selectedText) {
+              await navigator.clipboard.writeText(selectionMenu.selectedText);
             }
-            setContextMenu(null);
+            setSelectionMenu(null);
           },
         },
       ],
@@ -314,65 +339,127 @@ export function PdfViewer({ docId, isDark }: PdfViewerProps) {
         {
           label: "高亮标记 (黄色)",
           icon: "bold",
-          onClick: async () => {
-            if (contextMenu.pageRect && contextMenu.clientRects.length > 0) {
-              await highlightPdfText(
+          onClick: () => {
+            if (selectionMenu.pageRect && selectionMenu.clientRects.length > 0) {
+              addPdfHighlight(
                 docId,
-                contextMenu.pageNum,
-                contextMenu.clientRects,
-                contextMenu.pageRect,
+                selectionMenu.pageNum,
+                selectionMenu.clientRects,
+                selectionMenu.pageRect,
                 "yellow",
+                selectionMenu.selectedText,
               );
               window.getSelection()?.removeAllRanges();
             }
-            setContextMenu(null);
+            setSelectionMenu(null);
           },
         },
         {
           label: "高亮标记 (绿色)",
-          onClick: async () => {
-            if (contextMenu.pageRect && contextMenu.clientRects.length > 0) {
-              await highlightPdfText(
+          onClick: () => {
+            if (selectionMenu.pageRect && selectionMenu.clientRects.length > 0) {
+              addPdfHighlight(
                 docId,
-                contextMenu.pageNum,
-                contextMenu.clientRects,
-                contextMenu.pageRect,
+                selectionMenu.pageNum,
+                selectionMenu.clientRects,
+                selectionMenu.pageRect,
                 "green",
+                selectionMenu.selectedText,
               );
               window.getSelection()?.removeAllRanges();
             }
-            setContextMenu(null);
+            setSelectionMenu(null);
           },
         },
         {
           label: "高亮标记 (粉色)",
-          onClick: async () => {
-            if (contextMenu.pageRect && contextMenu.clientRects.length > 0) {
-              await highlightPdfText(
+          onClick: () => {
+            if (selectionMenu.pageRect && selectionMenu.clientRects.length > 0) {
+              addPdfHighlight(
                 docId,
-                contextMenu.pageNum,
-                contextMenu.clientRects,
-                contextMenu.pageRect,
+                selectionMenu.pageNum,
+                selectionMenu.clientRects,
+                selectionMenu.pageRect,
                 "pink",
+                selectionMenu.selectedText,
               );
               window.getSelection()?.removeAllRanges();
             }
-            setContextMenu(null);
+            setSelectionMenu(null);
           },
         },
       ],
+      ...(pageHls.length > 0 || hasAnyHls
+        ? [
+            [
+              ...(pageHls.length > 0
+                ? [
+                    {
+                      label: "清除本页所有高亮",
+                      icon: "trash" as any,
+                      onClick: () => {
+                        clearPageHighlights(docId, selectionMenu.pageNum);
+                        setSelectionMenu(null);
+                      },
+                    },
+                  ]
+                : []),
+              {
+                label: "清除全部高亮",
+                icon: "trash" as any,
+                onClick: () => {
+                  clearAllHighlights(docId);
+                  setSelectionMenu(null);
+                },
+              },
+            ],
+          ]
+        : []),
       [
         {
           label: "取消选区",
           icon: "x",
           onClick: () => {
             window.getSelection()?.removeAllRanges();
-            setContextMenu(null);
+            setSelectionMenu(null);
           },
         },
       ],
     ];
-  }, [contextMenu, docId]);
+  }, [selectionMenu, docId, doc?.pdfHighlights]);
+
+  // 高亮项自身右键菜单（支持删除高亮）
+  const highlightMenuGroups = useMemo<ContextMenuItem[][]>(() => {
+    if (!highlightMenu) return [];
+    return [
+      [
+        {
+          label: "移除此高亮",
+          icon: "trash",
+          onClick: () => {
+            removePdfHighlight(docId, highlightMenu.highlightId);
+            setHighlightMenu(null);
+          },
+        },
+      ],
+      [
+        {
+          label: "清除本页所有高亮",
+          onClick: () => {
+            clearPageHighlights(docId, highlightMenu.pageNum);
+            setHighlightMenu(null);
+          },
+        },
+        {
+          label: "清除全部高亮",
+          onClick: () => {
+            clearAllHighlights(docId);
+            setHighlightMenu(null);
+          },
+        },
+      ],
+    ];
+  }, [highlightMenu, docId]);
 
   return (
     <div className="relative flex h-full w-full flex-col overflow-hidden bg-panel">
@@ -436,7 +523,9 @@ export function PdfViewer({ docId, isDark }: PdfViewerProps) {
             title="缩小 (Ctrl+- 或 Ctrl+滚轮)"
             onClick={() => {
               setFitMode("custom");
-              setScale((s) => Math.max(0.3, Number((s - 0.15).toFixed(2))));
+              const next = Math.max(0.3, Number((scale - 0.15).toFixed(2)));
+              setScale(next);
+              setDebouncedScale(next);
             }}
             className="flex h-7 w-7 shrink-0 items-center justify-center rounded hover:bg-hover hover:text-fg"
           >
@@ -449,6 +538,7 @@ export function PdfViewer({ docId, isDark }: PdfViewerProps) {
             onClick={() => {
               setFitMode("custom");
               setScale(1.0);
+              setDebouncedScale(1.0);
             }}
           >
             {Math.round(scale * 100)}%
@@ -459,7 +549,9 @@ export function PdfViewer({ docId, isDark }: PdfViewerProps) {
             title="放大 (Ctrl+= 或 Ctrl+滚轮)"
             onClick={() => {
               setFitMode("custom");
-              setScale((s) => Math.min(4.0, Number((s + 0.15).toFixed(2))));
+              const next = Math.min(4.0, Number((scale + 0.15).toFixed(2)));
+              setScale(next);
+              setDebouncedScale(next);
             }}
             className="flex h-7 w-7 shrink-0 items-center justify-center rounded hover:bg-hover hover:text-fg"
           >
@@ -601,6 +693,12 @@ export function PdfViewer({ docId, isDark }: PdfViewerProps) {
                   pdfProxy={pdfProxy}
                   pageNum={pNum}
                   scale={scale}
+                  renderScale={debouncedScale}
+                  docId={docId}
+                  highlights={(doc?.pdfHighlights ?? []).filter((h) => h.page === pNum)}
+                  onHighlightContextMenu={(x, y, hlId, p) =>
+                    setHighlightMenu({ x, y, highlightId: hlId, pageNum: p })
+                  }
                 />
               </div>
             ))}
@@ -608,35 +706,88 @@ export function PdfViewer({ docId, isDark }: PdfViewerProps) {
         )}
       </div>
 
-      {/* 右键划词选区处理菜单 */}
-      {contextMenu ? (
+      {/* 划词选区处理菜单 */}
+      {selectionMenu ? (
         <ContextMenu
-          x={contextMenu.x}
-          y={contextMenu.y}
-          groups={contextMenuGroups}
-          onClose={() => setContextMenu(null)}
+          x={selectionMenu.x}
+          y={selectionMenu.y}
+          groups={selectionMenuGroups}
+          onClose={() => setSelectionMenu(null)}
+        />
+      ) : null}
+
+      {/* 高亮标注右键菜单（支持移除） */}
+      {highlightMenu ? (
+        <ContextMenu
+          x={highlightMenu.x}
+          y={highlightMenu.y}
+          groups={highlightMenuGroups}
+          onClose={() => setHighlightMenu(null)}
         />
       ) : null}
     </div>
   );
 }
 
-/** 单页 Canvas + TextLayer 渲染组件（带精确 --scale-factor 缩放绑定） */
+/** 单页 Canvas + TextLayer 渲染组件（带视口虚拟化渲染与白色背景防黑底机制） */
 function PdfPage({
   pdfProxy,
   pageNum,
   scale,
+  renderScale,
+  docId,
+  highlights,
+  onHighlightContextMenu,
 }: {
   pdfProxy: pdfjsLib.PDFDocumentProxy | null;
   pageNum: number;
   scale: number;
+  renderScale: number;
+  docId: string;
+  highlights: ReturnType<typeof useAppStore.getState>["docs"][0]["pdfHighlights"];
+  onHighlightContextMenu: (x: number, y: number, highlightId: string, pageNum: number) => void;
 }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const textLayerRef = useRef<HTMLDivElement>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
   const [dimensions, setDimensions] = useState<{ width: number; height: number } | null>(null);
+  const [isVisible, setIsVisible] = useState(false);
 
+  // 1. 计算当前页面在 1.0 比例下的固有尺寸（用于在未渲染时稳定占位，保证滚动条平滑）
   useEffect(() => {
     if (!pdfProxy) return;
+    let cancel = false;
+    void pdfProxy.getPage(pageNum).then((page) => {
+      if (cancel) return;
+      const viewport = page.getViewport({ scale });
+      setDimensions({ width: viewport.width, height: viewport.height });
+    });
+    return () => {
+      cancel = true;
+    };
+  }, [pdfProxy, pageNum, scale]);
+
+  // 2. 视口可见性观察器（虚拟化渲染：远离视口的页面不渲染重负载 canvas/textLayer）
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        const entry = entries[0];
+        setIsVisible(entry.isIntersecting);
+      },
+      {
+        root: null,
+        rootMargin: "450px 0px 450px 0px", // 提前 450px 预加载上下页面
+      },
+    );
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, []);
+
+  // 3. 可见时进行高清 Canvas + TextLayer 渲染
+  useEffect(() => {
+    if (!pdfProxy || !isVisible) return;
     let cancel = false;
     let renderTask: any = null;
 
@@ -645,20 +796,24 @@ function PdfPage({
         const page = await pdfProxy.getPage(pageNum);
         if (cancel) return;
 
-        // 根据设备像素比高清渲染 Canvas
         const dpr = window.devicePixelRatio || 1;
-        const viewport = page.getViewport({ scale: scale * dpr });
-        const cssViewport = page.getViewport({ scale });
-
-        setDimensions({ width: cssViewport.width, height: cssViewport.height });
+        const viewport = page.getViewport({ scale: renderScale * dpr });
+        const cssViewport = page.getViewport({ scale: renderScale });
 
         const canvas = canvasRef.current;
         if (!canvas) return;
-        const context = canvas.getContext("2d", { alpha: false });
+
+        // 关键修复 1：使用标准 context，不开启 alpha: false，杜绝黑底出现
+        const context = canvas.getContext("2d");
         if (!context) return;
 
         canvas.width = viewport.width;
         canvas.height = viewport.height;
+
+        // 关键修复 2：在尺寸变更的第一帧同步绘制纯白背景，避免重绘期间露出黑底
+        context.fillStyle = "#ffffff";
+        context.fillRect(0, 0, canvas.width, canvas.height);
+
         canvas.style.width = `${cssViewport.width}px`;
         canvas.style.height = `${cssViewport.height}px`;
 
@@ -669,10 +824,9 @@ function PdfPage({
         await renderTask.promise;
         if (cancel) return;
 
-        // 渲染透明文本选择层（解决高亮文字选区高度不跟随问题）
+        // 渲染透明文本选择层（保证选区与缩放高度严格一致）
         if (textLayerRef.current) {
           textLayerRef.current.innerHTML = "";
-          // 关键修复：必须设置 --scale-factor CSS 变量，确保 pdfjs 计算的文本选区与缩放字体高度严格匹配
           textLayerRef.current.style.setProperty("--scale-factor", String(cssViewport.scale));
 
           const textContent = await page.getTextContent();
@@ -698,27 +852,79 @@ function PdfPage({
       cancel = true;
       if (renderTask) renderTask.cancel();
     };
-  }, [pdfProxy, pageNum, scale]);
+  }, [pdfProxy, pageNum, renderScale, isVisible]);
+
+  const cssWidth = dimensions?.width ?? 600;
+  const cssHeight = dimensions?.height ?? 800;
 
   return (
     <div
+      ref={containerRef}
       style={{
-        width: dimensions ? `${dimensions.width}px` : "auto",
-        height: dimensions ? `${dimensions.height}px` : "auto",
+        width: `${cssWidth}px`,
+        height: `${cssHeight}px`,
       }}
-      className="relative flex items-center justify-center bg-white"
+      className="relative flex items-center justify-center bg-white shadow-xs"
     >
-      <canvas ref={canvasRef} className="block select-none" />
-      <div
-        ref={textLayerRef}
-        className="textLayer absolute inset-0 select-text leading-none"
-        style={{
-          width: dimensions ? `${dimensions.width}px` : "auto",
-          height: dimensions ? `${dimensions.height}px` : "auto",
-          // @ts-ignore
-          "--scale-factor": String(scale),
-        }}
-      />
+      {isVisible ? (
+        <>
+          <canvas ref={canvasRef} className="block select-none" />
+          <div
+            ref={textLayerRef}
+            className="textLayer absolute inset-0 select-text leading-none"
+            style={{
+              width: `${cssWidth}px`,
+              height: `${cssHeight}px`,
+              // @ts-ignore
+              "--scale-factor": String(scale),
+            }}
+          />
+
+          {/* 交互式高亮标注遮罩层：支持点击移除与右键菜单移除 */}
+          {highlights && highlights.length > 0 ? (
+            <div className="absolute inset-0 pointer-events-none z-10">
+              {highlights.map((hl) => (
+                <div key={hl.id} className="contents pointer-events-auto">
+                  {hl.rects.map((r, i) => (
+                    <div
+                      key={`${hl.id}-${i}`}
+                      data-highlight-id={hl.id}
+                      style={{
+                        left: `${r.xPercent}%`,
+                        top: `${r.yPercent}%`,
+                        width: `${r.wPercent}%`,
+                        height: `${r.hPercent}%`,
+                        backgroundColor:
+                          hl.color === "green"
+                            ? "rgba(74, 222, 128, 0.45)"
+                            : hl.color === "pink"
+                              ? "rgba(244, 114, 182, 0.45)"
+                              : "rgba(250, 204, 21, 0.45)",
+                      }}
+                      className="absolute rounded-xs mix-blend-multiply cursor-pointer hover:opacity-80 transition-opacity"
+                      title="点击或右键可移除此高亮标注"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        removePdfHighlight(docId, hl.id);
+                      }}
+                      onContextMenu={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        onHighlightContextMenu(e.clientX, e.clientY, hl.id, pageNum);
+                      }}
+                    />
+                  ))}
+                </div>
+              ))}
+            </div>
+          ) : null}
+        </>
+      ) : (
+        /* 视口外虚拟骨架占位 */
+        <div className="flex h-full w-full items-center justify-center text-[12px] text-faint bg-white">
+          <span className="font-mono opacity-40">第 {pageNum} 页</span>
+        </div>
+      )}
     </div>
   );
 }

@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { revealItemInDir, openPath as openWithSystem } from "@tauri-apps/plugin-opener";
+import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import { Icon, type IconName } from "../common/Icon";
 import { ContextMenu, type ContextMenuItem } from "../common/ContextMenu";
 import { useAppStore } from "../../stores/appStore";
@@ -74,8 +74,8 @@ export function TabBar({ pane = 0 }: Props) {
     useAppStore.getState().activateDoc(paneDocs[nextIdx].id, pane);
   };
 
-  // 单栏且文档 <= 1 且未开启江湖时隐藏标签栏以保持极简
-  if (!layout.split && docs.length <= 1 && !gameOpen) return null;
+  // 无文档且未开启江湖时隐藏标签栏
+  if (docs.length === 0 && !gameOpen) return null;
 
   const getContextMenuGroups = (doc: DocState): ContextMenuItem[][] => {
     return [
@@ -138,11 +138,6 @@ export function TabBar({ pane = 0 }: Props) {
                 label: "在文件资源管理器中显示",
                 icon: "folder-open" as IconName,
                 onClick: () => void revealItemInDir(doc.filePath!),
-              },
-              {
-                label: "用系统默认程序打开",
-                icon: "external-link" as IconName,
-                onClick: () => void openWithSystem(doc.filePath!),
               },
             ],
           ]

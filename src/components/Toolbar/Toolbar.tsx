@@ -42,7 +42,6 @@ import {
   saveActiveAs,
 } from "../../utils/fileActions";
 import { fileName, isMarkdownDoc, isPdfDoc } from "../../utils/filePath";
-import { openPath as openWithSystem } from "@tauri-apps/plugin-opener";
 import { parseDoc } from "../../utils/markdown";
 
 interface ToolbarProps {
@@ -387,15 +386,6 @@ export function Toolbar({ previewRef, isDark }: ToolbarProps) {
 
       <div className="flex-1" />
 
-      <ToolButton
-        icon="external-link"
-        label="用系统默认程序打开"
-        disabled={!doc?.filePath}
-        onClick={() => {
-          const path = doc?.filePath;
-          if (path) void openWithSystem(path);
-        }}
-      />
       {isMarkdown ? (
         <DropdownMenu
           icon="download"
