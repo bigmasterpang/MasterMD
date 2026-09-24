@@ -31,8 +31,12 @@ export const CODE_EXTENSIONS = [
   "dockerfile", "makefile", "gitignore", "editorconfig", "nginx", "service", "srt", "vtt",
 ];
 
+/** PDF 扩展名 */
+export const PDF_EXTENSIONS = ["pdf"];
+
 export const OPENABLE_EXTENSIONS = [
   ...MARKDOWN_EXTENSIONS,
+  ...PDF_EXTENSIONS,
   ...TEXT_EXTENSIONS,
   ...CODE_EXTENSIONS,
 ];
@@ -40,6 +44,7 @@ export const OPENABLE_EXTENSIONS = [
 /** 打开对话框过滤器 */
 export const OPEN_DIALOG_FILTERS = [
   { name: "Markdown 文件", extensions: MARKDOWN_EXTENSIONS },
+  { name: "PDF 文件", extensions: PDF_EXTENSIONS },
   { name: "文本与代码文件", extensions: [...TEXT_EXTENSIONS, ...CODE_EXTENSIONS] },
   { name: "所有文件", extensions: ["*"] },
 ];

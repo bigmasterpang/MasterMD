@@ -55,7 +55,15 @@ export type IconName =
   | "box"
   | "sidebar"
   | "folder-symlink"
-  | "filter";
+  | "filter"
+  | "lock"
+  | "rotate-cw"
+  | "rotate-ccw"
+  | "zoom-in"
+  | "zoom-out"
+  | "file-pdf"
+  | "book-open"
+  | "grid";
 
 const PATHS: Record<IconName, string[]> = {
   "folder-open": [
@@ -243,6 +251,43 @@ const PATHS: Record<IconName, string[]> = {
   ],
   filter: [
     "M22 3H2l8 9.46V19l4 2v-8.54L22 3z",
+  ],
+  lock: [
+    "M19 11H5a2 2 0 0 0-2 2v7a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7a2 2 0 0 0-2-2z",
+    "M7 11V7a5 5 0 0 1 10 0v4",
+  ],
+  "rotate-cw": [
+    "M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8",
+    "M21 3v5h-5",
+  ],
+  "rotate-ccw": [
+    "M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8",
+    "M3 3v5h5",
+  ],
+  "zoom-in": [
+    "M21 21l-6-6m2-5a7 7 0 1 1-14 0 7 7 0 0 1 14 0z",
+    "M11 8v6",
+    "M8 11h6",
+  ],
+  "zoom-out": [
+    "M21 21l-6-6m2-5a7 7 0 1 1-14 0 7 7 0 0 1 14 0z",
+    "M8 11h6",
+  ],
+  "file-pdf": [
+    "M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z",
+    "M14 2v6h6",
+    "M10 12h1a2 2 0 1 0 0-4h-1v8",
+    "M16 8v8",
+  ],
+  "book-open": [
+    "M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z",
+    "M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z",
+  ],
+  grid: [
+    "M3 3h7v7H3z",
+    "M14 3h7v7h-7z",
+    "M14 14h7v7h-7z",
+    "M3 14h7v7H3z",
   ],
 };
 

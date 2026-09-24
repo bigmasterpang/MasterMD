@@ -47,12 +47,20 @@ interface FormState {
   resolve: ((values: Record<string, string> | null) => void) | null;
 }
 
+export interface PdfPasswordState {
+  open: boolean;
+  name: string;
+  error?: string;
+  resolve: ((password: string | null) => void) | null;
+}
+
 interface DialogStore {
   unsaved: UnsavedState;
   conflict: ConflictState;
   confirm: ConfirmState;
   message: MessageState;
   form: FormState;
+  pdfPassword: PdfPasswordState;
   settingsVisible: boolean;
   shortcutsVisible: boolean;
   aboutVisible: boolean;
@@ -65,6 +73,7 @@ interface DialogStore {
   setConfirm: (patch: Partial<ConfirmState>) => void;
   setMessage: (patch: Partial<MessageState>) => void;
   setForm: (patch: Partial<FormState>) => void;
+  setPdfPassword: (patch: Partial<PdfPasswordState>) => void;
 }
 
 export const useDialogStore = create<DialogStore>((set) => ({
@@ -73,6 +82,7 @@ export const useDialogStore = create<DialogStore>((set) => ({
   confirm: { open: false, request: null, resolve: null },
   message: { open: false, title: "", text: "", resolve: null },
   form: { open: false, title: "", fields: [], confirmText: "插入", resolve: null },
+  pdfPassword: { open: false, name: "", error: undefined, resolve: null },
   settingsVisible: false,
   shortcutsVisible: false,
   aboutVisible: false,
@@ -85,7 +95,15 @@ export const useDialogStore = create<DialogStore>((set) => ({
   setConfirm: (patch) => set((s) => ({ confirm: { ...s.confirm, ...patch } })),
   setMessage: (patch) => set((s) => ({ message: { ...s.message, ...patch } })),
   setForm: (patch) => set((s) => ({ form: { ...s.form, ...patch } })),
+  setPdfPassword: (patch) => set((s) => ({ pdfPassword: { ...s.pdfPassword, ...patch } })),
 }));
+
+/** 提示用户输入 PDF 解锁密码 */
+export function askPdfPassword(name: string, error?: string): Promise<string | null> {
+  return new Promise((resolve) => {
+    useDialogStore.getState().setPdfPassword({ open: true, name, error, resolve });
+  });
+}
 
 /** 询问用户是否保存未保存的变更 */
 export function askUnsaved(name: string): Promise<UnsavedChoice> {

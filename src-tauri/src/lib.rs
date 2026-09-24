@@ -116,6 +116,7 @@ pub fn run() {
             confirm_close,
             open_in_new_window,
             file::read_markdown_file,
+            file::read_binary_file,
             file::write_markdown_file,
             file::write_binary_file,
             file::save_file_dialog,

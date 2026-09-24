@@ -33,6 +33,7 @@ import { UpdateDialog } from "./components/Dialogs/UpdateDialog";
 import { ShortcutsDialog } from "./components/Dialogs/ShortcutsDialog";
 import { AboutDialog } from "./components/Dialogs/AboutDialog";
 import { DungeonDialog } from "./components/Dialogs/DungeonDialog";
+import { PdfPasswordModal } from "./components/PDF/PdfPasswordModal";
 // 江湖玩法体积不小，按需加载（不打开就不下载）
 const WuxiaPanel = lazy(() =>
   import("./wuxia/ui/WuxiaPanel").then((m) => ({ default: m.WuxiaPanel })),
@@ -242,7 +243,7 @@ export default function App() {
       {dragOver ? (
         <div className="drop-overlay">
           <div className="rounded-[var(--radius)] bg-elevated px-6 py-4 shadow-[var(--shadow)]">
-            松开以打开 Markdown 文件
+            松开以打开文档 (Markdown / PDF / 文本 / 代码)
           </div>
         </div>
       ) : null}
@@ -257,6 +258,7 @@ export default function App() {
       <ShortcutsDialog />
       <AboutDialog />
       <DungeonDialog />
+      <PdfPasswordModal />
     </div>
   );
 }

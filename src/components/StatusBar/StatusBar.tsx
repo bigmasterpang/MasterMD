@@ -4,7 +4,7 @@ import { useUpdateStore } from "../../stores/updateStore";
 import { Icon } from "../common/Icon";
 import { countWords, formatBytes } from "../../utils/timing";
 import { APP_NAME, ENCODINGS, EOL_OPTIONS } from "../../utils/constants";
-import { docKindOf, extName, fileName } from "../../utils/filePath";
+import { docKindOf, extName, fileName, isPdfDoc } from "../../utils/filePath";
 import { setDocEncoding, setDocEol } from "../../utils/fileActions";
 import { extractFrontMatter } from "../../utils/frontMatter";
 
@@ -18,6 +18,7 @@ const KIND_LABEL = {
   markdown: "Markdown",
   text: "纯文本",
   code: "代码",
+  pdf: "PDF",
 } as const;
 
 /** 原始字数：源码中的字符数（不含空白），预览字数：渲染后可见字符数 */
@@ -85,30 +86,40 @@ export function StatusBar() {
       ) : null}
 
       {doc ? (
-        <>
-          <span title="光标位置">
-            行 {doc.cursorLine}, 列 {doc.cursorCol}
-          </span>
-          {doc.selectionLength > 0 ? (
-            <span title="已选中字符数">选中 {doc.selectionLength}</span>
-          ) : null}
-          <span title="原始字数：Markdown 源码字符数（不含空白）">
-            原始字数 {stats.rawChars}
-          </span>
-          <span title="预览字数：渲染后可见字符数（不含空白）">
-            预览字数 {stats.previewChars}
-          </span>
-          <span title="词数（中文按字、西文按词）">词数 {stats.words}</span>
-          <span className="hidden sm:inline" title="总行数">
-            {stats.lines} 行
-          </span>
-          <span title="文件大小">{doc.size > 0 ? formatBytes(doc.size) : formatBytes(bytes)}</span>
-        </>
+        isPdfDoc(doc) ? (
+          <>
+            <span title="当前页码">
+              第 {doc.pdfCurrentPage ?? 1} / {doc.pdfTotalPages ?? 1} 页
+            </span>
+            <span title="文件大小">{formatBytes(doc.size)}</span>
+            <span title="文件类型">PDF 文档</span>
+          </>
+        ) : (
+          <>
+            <span title="光标位置">
+              行 {doc.cursorLine}, 列 {doc.cursorCol}
+            </span>
+            {doc.selectionLength > 0 ? (
+              <span title="已选中字符数">选中 {doc.selectionLength}</span>
+            ) : null}
+            <span title="原始字数：Markdown 源码字符数（不含空白）">
+              原始字数 {stats.rawChars}
+            </span>
+            <span title="预览字数：渲染后可见字符数（不含空白）">
+              预览字数 {stats.previewChars}
+            </span>
+            <span title="词数（中文按字、西文按词）">词数 {stats.words}</span>
+            <span className="hidden sm:inline" title="总行数">
+              {stats.lines} 行
+            </span>
+            <span title="文件大小">{doc.size > 0 ? formatBytes(doc.size) : formatBytes(bytes)}</span>
+          </>
+        )
       ) : (
         <span>就绪</span>
       )}
 
-      {doc ? (
+      {doc && !isPdfDoc(doc) ? (
         <>
           <span title="文件类型">
             {KIND_LABEL[docKindOf(doc.filePath)]}
@@ -139,9 +150,9 @@ export function StatusBar() {
             ))}
           </select>
         </>
-      ) : (
+      ) : !doc ? (
         <span title="编码">UTF-8</span>
-      )}
+      ) : null}
       {doc?.encrypted ? (
         <span
           className="flex items-center gap-1 text-accent"
@@ -152,7 +163,7 @@ export function StatusBar() {
         </span>
       ) : null}
       {doc?.readOnly ? <span className="text-warning">只读</span> : null}
-      <span title="当前视图模式">{VIEW_LABEL[viewMode]}</span>
+      <span title="当前视图模式">{isPdfDoc(doc) ? "PDF 查看器" : VIEW_LABEL[viewMode]}</span>
     </div>
   );
 }

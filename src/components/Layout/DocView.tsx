@@ -1,4 +1,4 @@
-import { useState, useRef } from "react";
+import { useState, useRef, lazy, Suspense } from "react";
 import { TabBar } from "../Tabs/TabBar";
 import { MarkdownPreview } from "../Preview/MarkdownPreview";
 import { CodeMirrorEditor } from "../Editor/CodeMirrorEditor";
@@ -6,9 +6,11 @@ import { SplitView } from "./SplitView";
 import { WelcomeScreen } from "../Welcome/WelcomeScreen";
 import { SearchBar } from "../SearchBar/SearchBar";
 import { Icon } from "../common/Icon";
+
+const PdfViewer = lazy(() => import("../PDF/PdfViewer").then((m) => ({ default: m.PdfViewer })));
 import { useMarkdown, type MarkdownResult } from "../../hooks/useMarkdown";
 import { useAppStore } from "../../stores/appStore";
-import { isMarkdownDoc } from "../../utils/filePath";
+import { isMarkdownDoc, isPdfDoc } from "../../utils/filePath";
 import { REALTIME_PREVIEW_LIMIT } from "../../utils/constants";
 import { useTabDragStore } from "../../stores/tabDragStore";
 
@@ -135,6 +137,17 @@ export function DocView({ docId, pane, isDark, previewRef }: DocViewProps) {
               </div>
             </div>
           )
+        ) : isPdfDoc(doc) ? (
+          <Suspense
+            fallback={
+              <div className="flex h-full flex-col items-center justify-center gap-2 text-muted">
+                <Icon name="loader" size={24} className="animate-spin text-accent" />
+                <div className="text-[12px]">加载 PDF 模块…</div>
+              </div>
+            }
+          >
+            <PdfViewer key={doc.id} docId={doc.id} pane={pane} isDark={isDark} />
+          </Suspense>
         ) : !isMarkdown ? (
           <CodeMirrorEditor key={doc.id} docId={doc.id} isDark={isDark} />
         ) : viewMode === "preview" ? (

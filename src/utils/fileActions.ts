@@ -3,13 +3,13 @@ import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { createDoc, docFromPayload, getActiveDoc, getDocById, useAppStore } from "../stores/appStore";
 import { askConfirm, askUnsaved, showMessage } from "../stores/dialogStore";
-import type { FilePayload } from "../types";
+import type { BinaryPayload, FilePayload } from "../types";
 import {
   EMPTY_DOC_PLACEHOLDER,
   LARGE_FILE_BYTES,
   OPEN_DIALOG_FILTERS,
 } from "./constants";
-import { fileName, isMarkdownPath, isOpenablePath, samePath } from "./filePath";
+import { fileName, isMarkdownPath, isOpenablePath, isPdfPath, samePath } from "./filePath";
 import { formatBytes } from "./timing";
 
 /** 展示用名称 */
@@ -113,6 +113,25 @@ export async function openPath(path: string): Promise<boolean> {
   }
 
   try {
+    if (isPdfPath(path)) {
+      const payload = await invoke<BinaryPayload>("read_binary_file", { path });
+      const doc = createDoc({
+        filePath: payload.path,
+        docType: "pdf",
+        pdfBase64: payload.dataBase64,
+        savedPdfBase64: payload.dataBase64,
+        modifiedAt: payload.modifiedAt,
+        size: payload.size,
+        encrypted: payload.encrypted ?? false,
+        encryptedHeader: payload.encryptedHeader ?? null,
+        readOnly: false,
+      });
+      useAppStore.getState().addDoc(doc);
+      void addRecentFile(payload.path);
+      void watchFile(payload.path);
+      return true;
+    }
+
     const payload = await invoke<FilePayload>("read_markdown_file", { path });
     if (!payload.encrypted && payload.size > LARGE_FILE_BYTES) {
       const ok = await askConfirm({
@@ -146,7 +165,7 @@ export async function openFileDialog(): Promise<void> {
     const selected = await openDialog({
       multiple: false,
       directory: false,
-      title: "打开 Markdown 文件",
+      title: "打开文档 (Markdown / PDF / 代码 / 文本)",
       filters: OPEN_DIALOG_FILTERS,
     });
     if (typeof selected === "string") {
@@ -244,6 +263,24 @@ export async function saveDoc(id: string): Promise<boolean> {
   try {
     // 先标记自身写入：OS 可能在 invoke 返回前就投递监听事件
     markSelfWrite();
+    if (doc.docType === "pdf" || isPdfPath(doc.filePath)) {
+      if (!doc.pdfBase64) return false;
+      const modifiedAt = await invoke<number>("write_binary_file", {
+        path: doc.filePath,
+        base64: doc.pdfBase64,
+        encryptedHeader: doc.encryptedHeader,
+      });
+      markSelfWrite();
+      useAppStore.getState().patchDoc(id, {
+        savedPdfBase64: doc.pdfBase64,
+        isDirty: false,
+        modifiedAt,
+        size: (doc.encrypted ? 4096 : 0) + Math.floor((doc.pdfBase64.length * 3) / 4),
+      });
+      void addRecentFile(doc.filePath);
+      return true;
+    }
+
     const modifiedAt = await invoke<number>("write_markdown_file", {
       path: doc.filePath,
       content: doc.content,
@@ -272,13 +309,40 @@ export async function saveDocAs(id: string): Promise<boolean> {
   if (!doc) return false;
   try {
     const isBlank = doc.docType === "blank" && !doc.filePath;
-    const defaultPath = doc.filePath ?? (isBlank ? "未命名" : "未命名.md");
+    const isPdf = doc.docType === "pdf" || isPdfPath(doc.filePath);
+    const defaultPath = doc.filePath ?? (isPdf ? "未命名.pdf" : isBlank ? "未命名" : "未命名.md");
     const target = await invoke<string | null>("save_file_dialog", {
       defaultPath,
       filterAll: isBlank,
+      filterPdf: isPdf,
     });
     if (!target) return false;
     markSelfWrite();
+
+    if (isPdf) {
+      if (!doc.pdfBase64) return false;
+      const modifiedAt = await invoke<number>("write_binary_file", {
+        path: target,
+        base64: doc.pdfBase64,
+        encryptedHeader: doc.encryptedHeader,
+      });
+      markSelfWrite();
+      const oldPath = doc.filePath;
+      useAppStore.getState().patchDoc(id, {
+        filePath: target,
+        docType: "pdf",
+        savedPdfBase64: doc.pdfBase64,
+        isDirty: false,
+        readOnly: false,
+        size: (doc.encrypted ? 4096 : 0) + Math.floor((doc.pdfBase64.length * 3) / 4),
+        modifiedAt,
+      });
+      if (oldPath && !samePath(oldPath, target)) void unwatchFile(oldPath);
+      void addRecentFile(target);
+      void watchFile(target);
+      return true;
+    }
+
     const modifiedAt = await invoke<number>("write_markdown_file", {
       path: target,
       content: doc.content,
@@ -355,6 +419,23 @@ export async function reloadDocFromDisk(id: string): Promise<boolean> {
   const doc = getDocById(id);
   if (!doc?.filePath) return false;
   try {
+    if (doc.docType === "pdf" || isPdfPath(doc.filePath)) {
+      const payload = await invoke<BinaryPayload>("read_binary_file", {
+        path: doc.filePath,
+      });
+      const encrypted = payload.encrypted ?? false;
+      useAppStore.getState().patchDoc(id, {
+        pdfBase64: payload.dataBase64,
+        savedPdfBase64: payload.dataBase64,
+        isDirty: false,
+        encrypted,
+        encryptedHeader: payload.encryptedHeader ?? null,
+        modifiedAt: payload.modifiedAt,
+        size: payload.size,
+      });
+      return true;
+    }
+
     const payload = await invoke<FilePayload>("read_markdown_file", {
       path: doc.filePath,
     });

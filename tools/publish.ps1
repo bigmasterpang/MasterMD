@@ -51,7 +51,10 @@ if (-not $FilePath) {
     } else {
         $target = Join-Path $bundleDir "MasterMD_${Version}_x64-setup.exe"
         if (-not (Test-Path -LiteralPath $target)) {
-            throw "Installer not found: $target (run with -Build first)"
+            $target = Join-Path $bundleDir "mastermd_${Version}_x64-setup.exe"
+        }
+        if (-not (Test-Path -LiteralPath $target)) {
+            throw "Installer not found in $bundleDir (run with -Build first)"
         }
         $FilePath = $target
     }

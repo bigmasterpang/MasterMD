@@ -12,7 +12,7 @@ import {
   saveDoc,
   saveDocAs,
 } from "../../utils/fileActions";
-import { getDocBaseName, getDocTitle } from "../../utils/filePath";
+import { getDocBaseName, getDocTitle, isPdfDoc } from "../../utils/filePath";
 import type { DocState } from "../../types";
 
 interface Props {
@@ -343,7 +343,7 @@ export function TabBar({ pane = 0 }: Props) {
                 style={active ? { boxShadow: "inset 0 2px 0 0 var(--accent)" } : undefined}
               >
                 <Icon
-                  name={doc.filePath ? "file-text" : "file-plus"}
+                  name={isPdfDoc(doc) ? "file-pdf" : doc.filePath ? "file-text" : "file-plus"}
                   size={12}
                   className={active ? "text-accent" : "text-muted"}
                 />

@@ -5,8 +5,8 @@ import {
   TEXT_EXTENSIONS,
 } from "./constants";
 
-/** 文档类别：Markdown（预览/大纲/导出）/ 代码（语法高亮）/ 纯文本 */
-export type DocKind = "markdown" | "text" | "code";
+/** 文档类别：Markdown（预览/大纲/导出）/ 代码（语法高亮）/ 纯文本 / PDF 查看与编辑 */
+export type DocKind = "markdown" | "text" | "code" | "pdf";
 
 /** 统一使用反斜杠，便于 Windows 路径比较 */
 export function normalizeSlashes(p: string): string {
@@ -34,29 +34,55 @@ export function isMarkdownPath(p: string): boolean {
   return MARKDOWN_EXTENSIONS.includes(extName(p));
 }
 
+export function isPdfPath(p: string | null | undefined): boolean {
+  if (!p) return false;
+  return extName(p) === "pdf";
+}
+
+/** 判断文档是否为 PDF 文档 */
+export function isPdfDoc(
+  doc: { filePath: string | null; docType?: "markdown" | "blank" | "pdf" } | null | undefined,
+): boolean {
+  if (!doc) return false;
+  if (doc.docType === "pdf") return true;
+  if (doc.filePath && isPdfPath(doc.filePath)) return true;
+  return false;
+}
+
 /**
  * 判断文档是否应作为 Markdown 处理。
  * - 未保存的空白文档（docType === 'blank' 且无 filePath）明确不是 Markdown。
+ * - PDF 文档明确不是 Markdown。
  * - 有路径的文件根据扩展名判断。
  * - 其余未保存文档默认为 Markdown。
  */
-export function isMarkdownDoc(doc: { filePath: string | null; docType?: "markdown" | "blank" } | null | undefined): boolean {
+export function isMarkdownDoc(
+  doc: { filePath: string | null; docType?: "markdown" | "blank" | "pdf" } | null | undefined,
+): boolean {
   if (!doc) return false;
   if (doc.docType === "blank" && !doc.filePath) return false;
-  if (doc.filePath) return isMarkdownPath(doc.filePath);
+  if (doc.docType === "pdf") return false;
+  if (doc.filePath) {
+    if (isPdfPath(doc.filePath)) return false;
+    return isMarkdownPath(doc.filePath);
+  }
   return doc.docType !== "blank";
 }
 
 /** 获取文档基础名称（不含同名编号） */
-export function getDocBaseName(doc: { filePath: string | null; docType?: "markdown" | "blank" }): string {
+export function getDocBaseName(
+  doc: { filePath: string | null; docType?: "markdown" | "blank" | "pdf" },
+): string {
   if (doc.filePath) return fileName(doc.filePath);
-  return doc.docType === "blank" ? "未命名" : "未命名.md";
+  if (doc.docType === "blank") return "未命名";
+  if (doc.docType === "pdf") return "未命名.pdf";
+  return "未命名.md";
 }
 
 /** 获取文档展示标题。如果有多个同名文档，自动加上编号区分，如 README.md (1), README.md (2) */
 export function getDocTitle(
-  doc: { id: string; filePath: string | null; docType?: "markdown" | "blank" },
-  allDocs: Array<{ id: string; filePath: string | null; docType?: "markdown" | "blank" }>,
+  doc: { id: string; filePath: string | null; docType?: "markdown" | "blank" | "pdf" },
+  allDocs: Array<{ id: string; filePath: string | null; docType?: "markdown" | "blank" | "pdf" }>,
 ): string {
   const base = getDocBaseName(doc);
   const duplicates = allDocs.filter((d) => getDocBaseName(d) === base);
@@ -70,6 +96,7 @@ export function getDocTitle(
 export function docKindOf(p: string | null | undefined): DocKind {
   if (!p) return "markdown";
   const ext = extName(p);
+  if (ext === "pdf") return "pdf";
   if (MARKDOWN_EXTENSIONS.includes(ext)) return "markdown";
   if (CODE_EXTENSIONS.includes(ext)) return "code";
   if (TEXT_EXTENSIONS.includes(ext)) return "text";

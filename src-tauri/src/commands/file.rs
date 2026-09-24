@@ -125,17 +125,65 @@ pub async fn write_markdown_file(
     Ok(modified_ms(&meta))
 }
 
+/// 前端读取二进制文件后拿到的数据（用于 PDF 等）。
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BinaryPayload {
+    pub path: String,
+    pub data_base64: String,
+    pub modified_at: u64,
+    pub size: u64,
+    /// 是否为 Esafenet 透明加密文档（内容已解密，保存时按原格式加密写回）
+    pub encrypted: bool,
+    /// 加密文档的 4096 字节文件头（base64），保存时用于重新加密
+    pub encrypted_header: Option<String>,
+}
+
+#[tauri::command]
+pub async fn read_binary_file(path: String) -> Result<BinaryPayload, String> {
+    let p = validate_path(&path)?;
+    let meta = std::fs::metadata(&p).map_err(|e| format!("无法读取文件信息: {e}"))?;
+    if meta.is_dir() {
+        return Err("目标是文件夹，无法作为文档打开".to_string());
+    }
+    let raw = std::fs::read(&p).map_err(|e| format!("读取文件失败: {e}"))?;
+    // 企业透明加密文档：自动解密为明文供查看/编辑
+    let (bytes, encrypted, header) = match esafenet::decrypt_esafenet(&raw) {
+        Some(decrypted) => (decrypted, true, Some(base64_encode(&raw[..4096]))),
+        None => (raw, false, None),
+    };
+    Ok(BinaryPayload {
+        path: p.to_string_lossy().to_string(),
+        data_base64: base64_encode(&bytes),
+        modified_at: modified_ms(&meta),
+        size: meta.len(),
+        encrypted,
+        encrypted_header: header,
+    })
+}
+
 /// 弹出「另存为」系统对话框。前端负责把返回值写入文件。
 #[tauri::command]
 pub async fn save_file_dialog(
     app: tauri::AppHandle,
     default_path: Option<String>,
     filter_all: Option<bool>,
+    filter_pdf: Option<bool>,
 ) -> Result<Option<String>, String> {
     use tauri_plugin_dialog::DialogExt;
 
+    let is_pdf = filter_pdf.unwrap_or(false)
+        || default_path
+            .as_deref()
+            .map(|p| p.to_lowercase().ends_with(".pdf"))
+            .unwrap_or(false);
+
     let mut builder = app.dialog().file().set_title("另存为");
-    if filter_all.unwrap_or(false) {
+    if is_pdf {
+        builder = builder
+            .add_filter("PDF 文件", &["pdf"])
+            .add_filter("所有文件", &["*"]);
+    } else if filter_all.unwrap_or(false) {
         builder = builder
             .add_filter("所有文件", &["*"])
             .add_filter("Markdown 文件", &["md", "markdown", "mdown"])
@@ -260,18 +308,37 @@ fn base64_decode(input: &str) -> Result<Vec<u8>, String> {
     Ok(out)
 }
 
-/// 写入二进制文件（导出 PNG / DOCX 使用），内容以 base64 传输。
+/// 写入二进制文件（PDF 保存 / 导出 PNG / DOCX 使用），内容以 base64 传输。
 #[tauri::command]
-pub async fn write_binary_file(path: String, base64: String) -> Result<u64, String> {
+pub async fn write_binary_file(
+    path: String,
+    base64: String,
+    encrypted_header: Option<String>,
+) -> Result<u64, String> {
     let p = validate_path(&path)?;
     if let Some(parent) = p.parent() {
         if !parent.as_os_str().is_empty() && !parent.exists() {
             std::fs::create_dir_all(parent).map_err(|e| format!("创建目录失败: {e}"))?;
         }
     }
-    let bytes = base64_decode(&base64)?;
+    let header = match encrypted_header.filter(|s| !s.is_empty()) {
+        Some(b64) => Some(base64_decode(&b64)?),
+        None => {
+            // 目标已存在且为加密文档时沿用其头部
+            std::fs::read(&p)
+                .ok()
+                .filter(|existing| esafenet::is_esafenet_encrypted(existing))
+                .map(|existing| existing[..4096].to_vec())
+        }
+    };
+    let plain = base64_decode(&base64)?;
+    let bytes = match header {
+        Some(head) => esafenet::encrypt_esafenet(&head, &plain),
+        None => plain,
+    };
     std::fs::write(&p, &bytes).map_err(|e| format!("写入文件失败: {e}"))?;
-    Ok(bytes.len() as u64)
+    let meta = std::fs::metadata(&p).map_err(|e| format!("读取文件信息失败: {e}"))?;
+    Ok(modified_ms(&meta))
 }
 
 /// 供其它模块复用的路径父目录提取。

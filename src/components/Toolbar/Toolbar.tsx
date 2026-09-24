@@ -41,7 +41,7 @@ import {
   saveActive,
   saveActiveAs,
 } from "../../utils/fileActions";
-import { fileName, isMarkdownDoc } from "../../utils/filePath";
+import { fileName, isMarkdownDoc, isPdfDoc } from "../../utils/filePath";
 import { openPath as openWithSystem } from "@tauri-apps/plugin-opener";
 import { parseDoc } from "../../utils/markdown";
 
@@ -104,8 +104,9 @@ export function Toolbar({ previewRef, isDark }: ToolbarProps) {
 
   const hasDoc = Boolean(doc);
   const editable = viewMode !== "preview" && Boolean(doc) && !doc?.readOnly;
-  /** 非 Markdown 文档（新建空白文档/代码/纯文本）屏蔽所有 Markdown 专属操作 */
+  /** 非 Markdown 文档（新建空白文档/代码/纯文本/PDF）屏蔽所有 Markdown 专属操作 */
   const isMarkdown = isMarkdownDoc(doc);
+  const isPdf = isPdfDoc(doc);
 
   const cycleTheme = () => {
     const idx = THEME_ORDER.indexOf(theme);
@@ -365,7 +366,7 @@ export function Toolbar({ previewRef, isDark }: ToolbarProps) {
       <ToolButton
         icon="replace"
         label="替换 (Ctrl+H)"
-        disabled={!hasDoc}
+        disabled={!hasDoc || isPdf}
         active={searchVisible && replaceVisible}
         onClick={() => useSearchStore.getState().open(true)}
       />

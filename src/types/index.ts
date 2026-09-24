@@ -40,6 +40,18 @@ export interface HeadingItem {
   line: number;
 }
 
+/** 后端 read_binary_file 返回 */
+export interface BinaryPayload {
+  path: string;
+  dataBase64: string;
+  modifiedAt: number;
+  size: number;
+  /** 是否为企业透明加密文档（已自动解密） */
+  encrypted?: boolean;
+  /** 加密文档的 4096 字节文件头（base64），保存时用于按原格式加密写回 */
+  encryptedHeader?: string | null;
+}
+
 /** 单个文档（标签页）状态 */
 export interface DocState {
   id: string;
@@ -70,8 +82,20 @@ export interface DocState {
   scrollTop: number;
   /** 所属分栏：0（左栏/默认），1（右栏） */
   pane: 0 | 1;
-  /** 新建文档类型：markdown 或 blank（空白文档保存时由用户指定扩展名） */
-  docType?: "markdown" | "blank";
+  /** 新建文档类型：markdown 或 blank 或 pdf */
+  docType?: "markdown" | "blank" | "pdf";
+  /** PDF 文件的二进制数据（Base64 编码，编辑如删页/旋转后会更新并置 isDirty） */
+  pdfBase64?: string;
+  /** PDF 原始/已保存的二进制数据（Base64），用于判断脏状态或恢复 */
+  savedPdfBase64?: string;
+  /** PDF 当前页码（1-based） */
+  pdfCurrentPage?: number;
+  /** PDF 总页数 */
+  pdfTotalPages?: number;
+  /** PDF 缩放比例（例如 1.0, 1.25, 1.5, 或 "width", "page"） */
+  pdfScale?: number | "width" | "page";
+  /** PDF 密码（如果是密码加密文件） */
+  pdfPassword?: string;
 }
 
 /** 双栏文档布局状态 */
