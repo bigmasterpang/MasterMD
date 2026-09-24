@@ -309,22 +309,47 @@ export const useAppStore = create<AppStore>((set, get) => ({
     const { docs, activeIds, layout } = get();
     const target = docs.find((d) => d.id === id);
     if (!target) return;
-    const destPane = targetPane !== undefined ? targetPane : target.pane ?? 0;
+    const fromPane = (target.pane ?? 0) as 0 | 1;
+    const destPane = targetPane !== undefined ? targetPane : fromPane;
     let nextDocs = docs;
-    if (target.pane !== destPane) {
+
+    const nextActiveIds: [string | null, string | null] = [...activeIds];
+
+    if (fromPane !== destPane) {
       nextDocs = docs.map((d) => (d.id === id ? { ...d, pane: destPane } : d));
+      // 关键修复：当原分栏活动标签被移至新分栏时，原分栏必须切到自身剩余的标签，杜绝原分栏幽灵渲染
+      if (activeIds[fromPane] === id) {
+        const remainingInFrom = nextDocs.filter((d) => (d.pane ?? 0) === fromPane);
+        nextActiveIds[fromPane] = remainingInFrom.length > 0 ? remainingInFrom[0].id : null;
+      }
     }
 
-    const nextActiveIds: [string | null, string | null] = [
-      destPane === 0 ? id : activeIds[0],
-      destPane === 1 ? id : activeIds[1],
-    ];
+    nextActiveIds[destPane] = id;
+
+    // 若原分栏无剩余标签，则自动收回单栏
+    let nextSplit = layout.split;
+    let nextActivePane = destPane;
+    if (nextSplit) {
+      const p0Count = nextDocs.filter((d) => (d.pane ?? 0) === 0).length;
+      const p1Count = nextDocs.filter((d) => (d.pane ?? 0) === 1).length;
+      if (p0Count === 0 && p1Count > 0) {
+        nextDocs = nextDocs.map((d) => ({ ...d, pane: 0 as const }));
+        nextActiveIds[0] = id;
+        nextActiveIds[1] = null;
+        nextSplit = false;
+        nextActivePane = 0;
+      } else if (p1Count === 0 && p0Count > 0) {
+        nextActiveIds[1] = null;
+        nextSplit = false;
+        nextActivePane = 0;
+      }
+    }
 
     set({
       docs: nextDocs,
       activeIds: nextActiveIds,
       activeId: id,
-      layout: { ...layout, activePane: destPane },
+      layout: { ...layout, split: nextSplit, activePane: nextActivePane },
       searchVisible: false,
       searchQuery: "",
       gameOpen: false,

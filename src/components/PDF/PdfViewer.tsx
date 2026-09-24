@@ -19,10 +19,13 @@ import {
   deletePdfPage,
   extractPdfPage,
   PDF_PAPER_THEMES,
+  redoPdf,
   registerPdfDocument,
   removePdfHighlight,
+  repairBurnedPdfDocument,
   rotateAllPdfPages,
   rotatePdfPage,
+  undoPdf,
   unregisterPdfDocument,
   updatePdfHighlight,
   updatePdfNote,
@@ -72,9 +75,10 @@ const SCALE_PRESETS = [
   { label: "300%", value: 3.0 },
 ];
 
-export function PdfViewer({ docId, isDark }: PdfViewerProps) {
+export function PdfViewer({ docId, pane, isDark }: PdfViewerProps) {
   const doc = useAppStore((s) => s.docs.find((d) => d.id === docId) ?? null);
-  const outlineVisible = useAppStore((s) => s.outlineVisible);
+  const activePane = useAppStore((s) => s.layout.activePane);
+  const isPaneActive = pane === undefined || pane === activePane;
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [pdfProxy, setPdfProxy] = useState<pdfjsLib.PDFDocumentProxy | null>(null);
@@ -396,6 +400,45 @@ export function PdfViewer({ docId, isDark }: PdfViewerProps) {
       container.removeEventListener("wheel", handleWheel);
     };
   }, []);
+
+  // 支持 PDF 操作撤销与重做快捷键 (Ctrl+Z / Ctrl+Y / Ctrl+Shift+Z)
+  useEffect(() => {
+    if (!isPaneActive) return;
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // 避免干扰输入框或文本域中的正常撤回
+      const target = e.target as HTMLElement | null;
+      if (
+        target &&
+        (target.tagName === "INPUT" ||
+          target.tagName === "TEXTAREA" ||
+          target.isContentEditable)
+      ) {
+        return;
+      }
+
+      if (e.ctrlKey || e.metaKey) {
+        if (e.key === "z" || e.key === "Z") {
+          e.preventDefault();
+          e.stopPropagation();
+          targetPageAfterReload.current = currentPage;
+          if (e.shiftKey) {
+            void redoPdf(docId);
+          } else {
+            void undoPdf(docId);
+          }
+        } else if (e.key === "y" || e.key === "Y") {
+          e.preventDefault();
+          e.stopPropagation();
+          targetPageAfterReload.current = currentPage;
+          void redoPdf(docId);
+        }
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown, true);
+    return () => window.removeEventListener("keydown", handleKeyDown, true);
+  }, [docId, currentPage, isPaneActive]);
 
   // 右键菜单智能分流：选中文本 vs 空白非内容区域
   const handleContextMenu = (e: React.MouseEvent) => {
@@ -742,6 +785,39 @@ export function PdfViewer({ docId, isDark }: PdfViewerProps) {
       ],
       [
         {
+          label: "撤销操作",
+          hint: "Ctrl+Z",
+          icon: "undo",
+          onClick: () => {
+            setPageContextMenu(null);
+            targetPageAfterReload.current = currentPage;
+            void undoPdf(docId);
+          },
+        },
+        {
+          label: "重做操作",
+          hint: "Ctrl+Y",
+          icon: "redo",
+          onClick: () => {
+            setPageContextMenu(null);
+            targetPageAfterReload.current = currentPage;
+            void redoPdf(docId);
+          },
+        },
+      ],
+      [
+        {
+          label: "清除历史物理高亮涂层 (恢复纯净原貌)",
+          icon: "refresh",
+          onClick: async () => {
+            setPageContextMenu(null);
+            targetPageAfterReload.current = currentPage;
+            await repairBurnedPdfDocument(docId);
+          },
+        },
+      ],
+      [
+        {
           label: "适合页宽",
           onClick: () => {
             setPageContextMenu(null);
@@ -759,7 +835,7 @@ export function PdfViewer({ docId, isDark }: PdfViewerProps) {
         },
       ],
     ];
-  }, [pageContextMenu, docId, updateFitWidth, updateFitPage]);
+  }, [pageContextMenu, docId, currentPage, updateFitWidth, updateFitPage]);
 
   // 根据当前选择的阅读底色，渲染舒适的背景色调
   const containerBgClass = useMemo(() => {
@@ -771,26 +847,18 @@ export function PdfViewer({ docId, isDark }: PdfViewerProps) {
   }, [paperTheme, isDark]);
 
   return (
-    <div className="relative flex h-full w-full flex-col overflow-hidden bg-panel">
+    <div
+      onClick={() => {
+        if (pane !== undefined && activePane !== pane) {
+          useAppStore.getState().setActivePane(pane);
+        }
+      }}
+      className="relative flex h-full w-full flex-col overflow-hidden bg-panel"
+    >
       {/* PDF 顶置工具栏 */}
       <div className="flex h-9 shrink-0 items-center justify-between gap-1 border-b border-line bg-panel px-2 text-[12px] text-muted relative z-20">
-        {/* 左侧：侧栏切换 & 页码跳转 */}
+        {/* 左侧：页码选择器 */}
         <div className="flex shrink-0 items-center gap-1">
-          <button
-            type="button"
-            title={outlineVisible ? "收起文档大纲与缩略图 (Ctrl+Shift+E)" : "展开文档大纲与缩略图 (Ctrl+Shift+E)"}
-            onClick={() => useAppStore.getState().setOutlineVisible(!outlineVisible)}
-            className={`flex h-7 shrink-0 whitespace-nowrap items-center gap-1 rounded px-2 transition-colors ${
-              outlineVisible ? "bg-accent/15 text-accent font-medium" : "hover:bg-hover hover:text-fg"
-            }`}
-          >
-            <Icon name="grid" size={14} className="shrink-0" />
-            <span className="hidden sm:inline whitespace-nowrap">侧栏</span>
-          </button>
-
-          <div className="mx-1 h-4 w-px shrink-0 bg-line" />
-
-          {/* 页码选择器 */}
           <button
             type="button"
             title="上一页 (Page Up)"
@@ -936,6 +1004,33 @@ export function PdfViewer({ docId, isDark }: PdfViewerProps) {
 
         {/* 右侧：编辑与页面操作（区分单页旋转与全部旋转图标） */}
         <div className="flex shrink-0 items-center gap-0.5 sm:gap-1">
+          {/* 撤销 / 重做 */}
+          <button
+            type="button"
+            title="撤销 (Ctrl+Z)"
+            onClick={() => {
+              targetPageAfterReload.current = currentPage;
+              void undoPdf(docId);
+            }}
+            className="flex h-7 w-7 shrink-0 items-center justify-center rounded hover:bg-hover hover:text-fg"
+          >
+            <Icon name="undo" size={13} className="shrink-0" />
+          </button>
+
+          <button
+            type="button"
+            title="重做 (Ctrl+Y)"
+            onClick={() => {
+              targetPageAfterReload.current = currentPage;
+              void redoPdf(docId);
+            }}
+            className="flex h-7 w-7 shrink-0 items-center justify-center rounded hover:bg-hover hover:text-fg"
+          >
+            <Icon name="redo" size={13} className="shrink-0" />
+          </button>
+
+          <div className="mx-0.5 h-4 w-px shrink-0 bg-line" />
+
           <button
             type="button"
             title="顺时针旋转当前页 90°"

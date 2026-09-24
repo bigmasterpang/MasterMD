@@ -67,7 +67,9 @@ export type IconName =
   | "grid"
   | "pin"
   | "message-square"
-  | "palette";
+  | "palette"
+  | "undo"
+  | "redo";
 
 const PATHS: Record<IconName, string[]> = {
   "folder-open": [
@@ -311,6 +313,14 @@ const PATHS: Record<IconName, string[]> = {
     "M7.5 10.5a1.5 1.5 0 1 1 0-3 1.5 1.5 0 0 1 0 3z",
     "M11.5 7.5a1.5 1.5 0 1 1 0-3 1.5 1.5 0 0 1 0 3z",
     "M16.5 8.5a1.5 1.5 0 1 1 0-3 1.5 1.5 0 0 1 0 3z",
+  ],
+  undo: [
+    "M3 7v6h6",
+    "M21 17a9 9 0 0 0-9-9 9 9 0 0 0-6 2.3L3 13",
+  ],
+  redo: [
+    "M21 7v6h-6",
+    "M3 17a9 9 0 0 1 9-9 9 9 0 0 1 6 2.3L21 13",
   ],
 };
 

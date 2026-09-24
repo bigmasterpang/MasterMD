@@ -108,6 +108,94 @@ export function jumpToPdfPage(docId: string, pageNum: number) {
   useAppStore.getState().patchDoc(docId, { pdfCurrentPage: pageNum });
 }
 
+/* ---------------- PDF 历史快照与撤回 / 重做系统 (Ctrl+Z / Ctrl+Y) ---------------- */
+
+interface PdfSnapshot {
+  pdfBase64: string;
+  pdfHighlights: PdfHighlight[];
+  pdfNotes: PdfNote[];
+}
+
+interface PdfHistoryStack {
+  undoStack: PdfSnapshot[];
+  redoStack: PdfSnapshot[];
+}
+
+const docHistories = new Map<string, PdfHistoryStack>();
+
+export function getPdfHistory(docId: string): PdfHistoryStack {
+  let hist = docHistories.get(docId);
+  if (!hist) {
+    hist = { undoStack: [], redoStack: [] };
+    docHistories.set(docId, hist);
+  }
+  return hist;
+}
+
+/** 在进行破坏性修改或添加标注前记录快照 */
+export function recordPdfSnapshot(docId: string) {
+  const doc = useAppStore.getState().docs.find((d) => d.id === docId);
+  if (!doc) return;
+  const hist = getPdfHistory(docId);
+  if (hist.undoStack.length >= 30) {
+    hist.undoStack.shift();
+  }
+  hist.undoStack.push({
+    pdfBase64: doc.pdfBase64 ?? "",
+    pdfHighlights: JSON.parse(JSON.stringify(doc.pdfHighlights ?? [])),
+    pdfNotes: JSON.parse(JSON.stringify(doc.pdfNotes ?? [])),
+  });
+  hist.redoStack = [];
+}
+
+/** 撤销 (Ctrl+Z) */
+export function undoPdf(docId: string): boolean {
+  const hist = getPdfHistory(docId);
+  if (hist.undoStack.length === 0) return false;
+  const doc = useAppStore.getState().docs.find((d) => d.id === docId);
+  if (!doc) return false;
+
+  hist.redoStack.push({
+    pdfBase64: doc.pdfBase64 ?? "",
+    pdfHighlights: JSON.parse(JSON.stringify(doc.pdfHighlights ?? [])),
+    pdfNotes: JSON.parse(JSON.stringify(doc.pdfNotes ?? [])),
+  });
+
+  const prev = hist.undoStack.pop()!;
+  useAppStore.getState().patchDoc(docId, {
+    pdfBase64: prev.pdfBase64,
+    cleanPdfBase64: prev.pdfBase64,
+    pdfHighlights: prev.pdfHighlights,
+    pdfNotes: prev.pdfNotes,
+    isDirty: true,
+  });
+  return true;
+}
+
+/** 重做 (Ctrl+Y 或 Ctrl+Shift+Z) */
+export function redoPdf(docId: string): boolean {
+  const hist = getPdfHistory(docId);
+  if (hist.redoStack.length === 0) return false;
+  const doc = useAppStore.getState().docs.find((d) => d.id === docId);
+  if (!doc) return false;
+
+  hist.undoStack.push({
+    pdfBase64: doc.pdfBase64 ?? "",
+    pdfHighlights: JSON.parse(JSON.stringify(doc.pdfHighlights ?? [])),
+    pdfNotes: JSON.parse(JSON.stringify(doc.pdfNotes ?? [])),
+  });
+
+  const next = hist.redoStack.pop()!;
+  useAppStore.getState().patchDoc(docId, {
+    pdfBase64: next.pdfBase64,
+    cleanPdfBase64: next.pdfBase64,
+    pdfHighlights: next.pdfHighlights,
+    pdfNotes: next.pdfNotes,
+    isDirty: true,
+  });
+  return true;
+}
+
 /* ---------------- PDF 高亮标注（动态、可撤销/取消） ---------------- */
 
 /** 添加高亮标注 */
@@ -204,6 +292,7 @@ export function addPdfHighlight(
     createdAt: Date.now(),
   };
 
+  recordPdfSnapshot(docId);
   const existing = doc.pdfHighlights ?? [];
   useAppStore.getState().patchDoc(docId, {
     pdfHighlights: [...existing, newHighlight],
@@ -216,6 +305,7 @@ export function addPdfHighlight(
 export function updatePdfHighlight(docId: string, highlightId: string, patch: Partial<PdfHighlight>) {
   const doc = useAppStore.getState().docs.find((d) => d.id === docId);
   if (!doc || !doc.pdfHighlights) return;
+  recordPdfSnapshot(docId);
   useAppStore.getState().patchDoc(docId, {
     pdfHighlights: doc.pdfHighlights.map((h) => (h.id === highlightId ? { ...h, ...patch } : h)),
     isDirty: true,
@@ -236,6 +326,7 @@ export function batchDeletePdfAnnotations(
   const nextHighlights = (doc.pdfHighlights ?? []).filter((h) => !hlSet.has(h.id));
   const nextNotes = (doc.pdfNotes ?? []).filter((n) => !noteSet.has(n.id));
 
+  recordPdfSnapshot(docId);
   useAppStore.getState().patchDoc(docId, {
     pdfHighlights: nextHighlights,
     pdfNotes: nextNotes,
@@ -262,6 +353,7 @@ export function focusPdfAnnotation(
 export function removePdfHighlight(docId: string, highlightId: string) {
   const doc = useAppStore.getState().docs.find((d) => d.id === docId);
   if (!doc || !doc.pdfHighlights) return;
+  recordPdfSnapshot(docId);
   useAppStore.getState().patchDoc(docId, {
     pdfHighlights: doc.pdfHighlights.filter((h) => h.id !== highlightId),
     isDirty: true,
@@ -272,16 +364,29 @@ export function removePdfHighlight(docId: string, highlightId: string) {
 export function clearPageHighlights(docId: string, pageNum: number) {
   const doc = useAppStore.getState().docs.find((d) => d.id === docId);
   if (!doc || !doc.pdfHighlights) return;
+  recordPdfSnapshot(docId);
   useAppStore.getState().patchDoc(docId, {
     pdfHighlights: doc.pdfHighlights.filter((h) => h.page !== pageNum),
     isDirty: true,
   });
 }
 
-/** 清除文档内的所有高亮标注 */
-export function clearAllHighlights(docId: string) {
+/** 清除文档内的所有高亮标注（若存在历史版本残留的物理涂层，一并深度净化清除） */
+export async function clearAllHighlights(docId: string) {
+  recordPdfSnapshot(docId);
+  const doc = useAppStore.getState().docs.find((d) => d.id === docId);
+  let cleanedBase64 = doc?.pdfBase64;
+  if (doc?.pdfBase64) {
+    const res = await cleanBurnedHighlightsFromPdf(doc.pdfBase64);
+    if (res.removedCount > 0) {
+      cleanedBase64 = res.cleanedBase64;
+    }
+  }
   useAppStore.getState().patchDoc(docId, {
     pdfHighlights: [],
+    ...(cleanedBase64 && cleanedBase64 !== doc?.pdfBase64
+      ? { pdfBase64: cleanedBase64, cleanPdfBase64: cleanedBase64 }
+      : {}),
     isDirty: true,
   });
 }
@@ -308,6 +413,7 @@ export function addPdfNote(
     createdAt: Date.now(),
   };
 
+  recordPdfSnapshot(docId);
   const existing = doc?.pdfNotes ?? [];
   useAppStore.getState().patchDoc(docId, {
     pdfNotes: [...existing, newNote],
@@ -320,6 +426,7 @@ export function addPdfNote(
 export function updatePdfNote(docId: string, noteId: string, patch: Partial<PdfNote>) {
   const doc = useAppStore.getState().docs.find((d) => d.id === docId);
   if (!doc || !doc.pdfNotes) return;
+  recordPdfSnapshot(docId);
   useAppStore.getState().patchDoc(docId, {
     pdfNotes: doc.pdfNotes.map((n) => (n.id === noteId ? { ...n, ...patch } : n)),
     isDirty: true,
@@ -330,6 +437,7 @@ export function updatePdfNote(docId: string, noteId: string, patch: Partial<PdfN
 export function deletePdfNote(docId: string, noteId: string) {
   const doc = useAppStore.getState().docs.find((d) => d.id === docId);
   if (!doc || !doc.pdfNotes) return;
+  recordPdfSnapshot(docId);
   useAppStore.getState().patchDoc(docId, {
     pdfNotes: doc.pdfNotes.filter((n) => n.id !== noteId),
     isDirty: true,
@@ -402,6 +510,135 @@ export async function burnHighlightsToPdf(
   }
 }
 
+/**
+ * 修复与清洗历史版本被 burnHighlightsToPdf 写入的永久物理高亮涂层
+ */
+export async function cleanBurnedHighlightsFromPdf(
+  base64Data: string,
+): Promise<{ cleanedBase64: string; removedCount: number }> {
+  try {
+    const rawBytes = base64ToBytes(base64Data);
+    const pdfDoc = await PDFDocument.load(rawBytes, { ignoreEncryption: true });
+    let removedCount = 0;
+
+    for (let p = 0; p < pdfDoc.getPageCount(); p++) {
+      const page = pdfDoc.getPage(p);
+      const contents = page.node.Contents();
+      if (!contents) continue;
+
+      if (contents.constructor?.name === "PDFArray") {
+        const arr = (contents as any).asArray();
+        const keptRefs: any[] = [];
+
+        for (let i = 0; i < arr.length; i++) {
+          const ref = arr[i];
+          const stream = pdfDoc.context.lookup(ref);
+          let isBurned = false;
+
+          if (stream && typeof (stream as any).getContents === "function") {
+            try {
+              const raw: Uint8Array = (stream as any).getContents();
+              let text = "";
+
+              // 1. 先尝试直接解码（未压缩纯文本流）
+              try {
+                text = new TextDecoder("latin1").decode(raw);
+              } catch {
+                /* ignore */
+              }
+
+              // 2. 如果直接解码未匹配到特征，尝试 deflate 解压（zlib 或 raw deflate）
+              if (
+                !text.includes("0.92 0.23") &&
+                !text.includes("0.45 0.75") &&
+                !text.includes("0.3 0.9 0.4")
+              ) {
+                try {
+                  const ds = new DecompressionStream("deflate");
+                  const writer = ds.writable.getWriter();
+                  writer.write(raw as any);
+                  writer.close();
+                  text = await new Response(ds.readable).text();
+                } catch {
+                  try {
+                    const dsRaw = new DecompressionStream("deflate-raw");
+                    const writer = dsRaw.writable.getWriter();
+                    writer.write(raw as any);
+                    writer.close();
+                    text = await new Response(dsRaw.readable).text();
+                  } catch {
+                    /* ignore decompression error */
+                  }
+                }
+              }
+
+              // 3. 严格特征识别：必须匹配高亮调色板 RGB，且不能包含文字正文指令 (BT)
+              const hasHighlightColor =
+                text.includes("1 0.92 0.23 rg") ||
+                text.includes("0.3 0.9 0.4 rg") ||
+                text.includes("1 0.45 0.75 rg") ||
+                (text.includes("0.92 0.23") && text.includes("rg")) ||
+                (text.includes("0.45 0.75") && text.includes("rg")) ||
+                (text.includes("0.3 0.9 0.4") && text.includes("rg"));
+
+              if (hasHighlightColor && !text.includes("BT") && !text.includes("ET")) {
+                isBurned = true;
+              }
+            } catch {
+              /* ignore error */
+            }
+          }
+
+          if (isBurned) {
+            removedCount++;
+          } else {
+            keptRefs.push(ref);
+          }
+        }
+
+        if (keptRefs.length < arr.length) {
+          arr.length = 0;
+          for (const r of keptRefs) arr.push(r);
+        }
+      }
+    }
+
+    if (removedCount > 0) {
+      const newBytes = await pdfDoc.save();
+      return { cleanedBase64: bytesToBase64(newBytes), removedCount };
+    }
+    return { cleanedBase64: base64Data, removedCount: 0 };
+  } catch (err) {
+    console.error("清洗物理高亮失败", err);
+    return { cleanedBase64: base64Data, removedCount: 0 };
+  }
+}
+
+/** 用户手动触发清洗并恢复受污染的 PDF 文档 */
+export async function repairBurnedPdfDocument(docId: string): Promise<boolean> {
+  const doc = useAppStore.getState().docs.find((d) => d.id === docId);
+  if (!doc?.pdfBase64) return false;
+
+  const { cleanedBase64, removedCount } = await cleanBurnedHighlightsFromPdf(doc.pdfBase64);
+  if (removedCount === 0) {
+    await showMessage("无需修复", "未检测到由旧版软件烙印的物理高亮涂层，文档内容已是纯净状态。");
+    return false;
+  }
+
+  recordPdfSnapshot(docId);
+  useAppStore.getState().patchDoc(docId, {
+    pdfBase64: cleanedBase64,
+    cleanPdfBase64: cleanedBase64,
+    isDirty: true,
+  });
+
+  await showMessage(
+    "恢复成功",
+    `已成功检测并清除 ${removedCount} 处历史遗留的永久高亮涂层！文档已恢复至原始纯净版。可使用 Ctrl+S 保存修复结果。`,
+  );
+  return true;
+}
+
 /* ---------------- PDF 编辑操作 ---------------- */
 
 /** 旋转指定页面（顺时针/逆时针 90 度） */
@@ -409,6 +646,7 @@ export async function rotatePdfPage(docId: string, pageNum: number, clockwise = 
   const doc = useAppStore.getState().docs.find((d) => d.id === docId);
   if (!doc?.pdfBase64) return;
   try {
+    recordPdfSnapshot(docId);
     const rawBytes = base64ToBytes(doc.pdfBase64);
     const pdfDoc = await PDFDocument.load(rawBytes, { ignoreEncryption: true });
     const page = pdfDoc.getPage(pageNum - 1);
@@ -434,6 +672,7 @@ export async function rotateAllPdfPages(docId: string, clockwise = true) {
   const doc = useAppStore.getState().docs.find((d) => d.id === docId);
   if (!doc?.pdfBase64) return;
   try {
+    recordPdfSnapshot(docId);
     const rawBytes = base64ToBytes(doc.pdfBase64);
     const pdfDoc = await PDFDocument.load(rawBytes, { ignoreEncryption: true });
     const pages = pdfDoc.getPages();
@@ -474,6 +713,7 @@ export async function deletePdfPage(docId: string, pageNum: number) {
   if (!ok) return;
 
   try {
+    recordPdfSnapshot(docId);
     const rawBytes = base64ToBytes(doc.pdfBase64);
     const pdfDoc = await PDFDocument.load(rawBytes, { ignoreEncryption: true });
     pdfDoc.removePage(pageNum - 1);
@@ -540,6 +780,7 @@ export async function reorderPdfPages(docId: string, fromIndex: number, toIndex:
   const numPages = doc.pdfTotalPages ?? 1;
 
   try {
+    recordPdfSnapshot(docId);
     const rawBytes = base64ToBytes(doc.pdfBase64);
     const srcDoc = await PDFDocument.load(rawBytes, { ignoreEncryption: true });
     const newDoc = await PDFDocument.create();
