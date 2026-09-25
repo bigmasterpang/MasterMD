@@ -921,3 +921,31 @@ html.dark .hljs-meta {
 .cm-lineNumbers .cm-gutterElement {
   padding: 0 8px 0 12px;
 }
+
+/* ------------------------------------------------------------------ */
+/* 代码查看器高级导航样式：同名符号高亮、Ctrl+悬停跳转、定位脉冲         */
+/* ------------------------------------------------------------------ */
+.cm-word-occurrence {
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+  border-bottom: 1px dashed color-mix(in srgb, var(--accent) 60%, transparent);
+  border-radius: 2px;
+}
+.cm-ctrl-link {
+  color: var(--accent) !important;
+  text-decoration: underline;
+  text-decoration-color: var(--accent);
+  text-underline-offset: 2px;
+  cursor: pointer !important;
+}
+.cm-jump-flash {
+  animation: cm-jump-pulse 1.5s ease-out forwards;
+}
+@keyframes cm-jump-pulse {
+  0% {
+    background: color-mix(in srgb, var(--accent) 32%, transparent) !important;
+  }
+  100% {
+    background: transparent !important;
+  }
+}
+

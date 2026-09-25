@@ -1,4 +1,4 @@
-import { useState, useRef, lazy, Suspense } from "react";
+import { useState, useRef, useEffect, lazy, Suspense } from "react";
 import { TabBar } from "../Tabs/TabBar";
 import { MarkdownPreview } from "../Preview/MarkdownPreview";
 import { CodeMirrorEditor } from "../Editor/CodeMirrorEditor";
@@ -9,7 +9,8 @@ import { Icon } from "../common/Icon";
 
 const PdfViewer = lazy(() => import("../PDF/PdfViewer").then((m) => ({ default: m.PdfViewer })));
 import { useMarkdown, type MarkdownResult } from "../../hooks/useMarkdown";
-import { useAppStore } from "../../stores/appStore";
+import { useAppStore, getDocById } from "../../stores/appStore";
+import { useSettingsStore } from "../../stores/settingsStore";
 import { isMarkdownDoc, isPdfDoc } from "../../utils/filePath";
 import { REALTIME_PREVIEW_LIMIT } from "../../utils/constants";
 import { useTabDragStore } from "../../stores/tabDragStore";
@@ -23,6 +24,8 @@ interface DocViewProps {
 
 export function DocView({ docId, pane, isDark, previewRef }: DocViewProps) {
   const doc = useAppStore((s) => s.docs.find((d) => d.id === docId) ?? null);
+  const defaultFontSize = useSettingsStore((s) => s.fontSize);
+  const effectiveFontSize = doc?.fontSize ?? defaultFontSize;
   const viewMode = useAppStore((s) => s.viewMode);
   const layout = useAppStore((s) => s.layout);
   const activePane = layout.activePane;
@@ -40,6 +43,29 @@ export function DocView({ docId, pane, isDark, previewRef }: DocViewProps) {
   // 拖动标签放置区状态
   const viewRef = useRef<HTMLDivElement>(null);
   const [dropZone, setDropZone] = useState<"left" | "right" | null>(null);
+
+  // 分栏内文档独立滚轮缩放（仅缩放鼠标所在分栏的当前文档，不影响另一栏）
+  useEffect(() => {
+    const el = viewRef.current;
+    if (!el || !docId) return;
+    const onWheel = (event: WheelEvent) => {
+      if (!event.ctrlKey && !event.metaKey) return;
+      const currentDoc = getDocById(docId);
+      if (!currentDoc || isPdfDoc(currentDoc)) return;
+      event.preventDefault();
+      event.stopPropagation();
+      const base = currentDoc.fontSize ?? useSettingsStore.getState().fontSize;
+      const delta = event.deltaY < 0 ? 1 : -1;
+      const nextSize = Math.min(32, Math.max(10, base + delta));
+      const store = useAppStore.getState();
+      if (store.layout.activePane !== pane) {
+        store.setActivePane(pane);
+      }
+      store.patchDoc(docId, { fontSize: nextSize });
+    };
+    el.addEventListener("wheel", onWheel, { passive: false });
+    return () => el.removeEventListener("wheel", onWheel);
+  }, [docId, pane]);
 
   const refreshPreview = () => {
     setSnapshot({
@@ -108,6 +134,7 @@ export function DocView({ docId, pane, isDark, previewRef }: DocViewProps) {
     <div
       ref={viewRef}
       data-pane-viewport={pane}
+      style={{ "--editor-size": `${effectiveFontSize}px` } as React.CSSProperties}
       onDragOver={handleDragOver}
       onDragLeave={handleDragLeave}
       onDrop={handleDrop}

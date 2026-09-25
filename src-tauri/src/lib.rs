@@ -124,6 +124,7 @@ pub fn run() {
             file::read_file_as_base64,
             commands::fs::list_directory,
             commands::fs::parent_dir_of,
+            commands::fs::search_workspace_symbols,
             recent::get_recent_files,
             recent::add_recent_file,
             recent::remove_recent_file,

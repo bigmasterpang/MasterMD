@@ -134,7 +134,7 @@ async function checkPortalDirect(current: string): Promise<UpdateInfo | null> {
   for (const base of nodes) {
     for (const variant of ["installer", "portable"]) {
       try {
-        const resp = await fetch(`${base}/api/apps/mastermd/windows/latest?variant=${variant}`, {
+        const resp = await fetch(`${base}/api/apps/masteredit/windows/latest?variant=${variant}`, {
           cache: "no-store",
         });
         if (resp.ok) {

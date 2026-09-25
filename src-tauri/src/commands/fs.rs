@@ -107,3 +107,311 @@ pub async fn parent_dir_of(path: String) -> Result<Option<String>, String> {
         .filter(|d| !d.as_os_str().is_empty())
         .map(|d| d.to_string_lossy().to_string()))
 }
+
+/* ------------------------------------------------------------------ */
+/* 跨文件代码符号检索（零配置转到定义 & 查找所有引用）                    */
+/* ------------------------------------------------------------------ */
+
+#[derive(Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct SnippetLine {
+    pub line: usize,
+    pub text: String,
+}
+
+#[derive(Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkspaceCodeMatch {
+    pub path: String,
+    pub file_name: String,
+    /// 1-based 行号
+    pub line: usize,
+    /// 1-based 列号
+    pub col: usize,
+    pub line_text: String,
+    /// "function" | "method" | "class" | "type" | "variable" | "reference"
+    pub kind: String,
+    pub is_definition: bool,
+    pub preview_lines: Vec<SnippetLine>,
+}
+
+const CODE_EXTS: &[&str] = &[
+    "rs", "ts", "tsx", "js", "jsx", "mjs", "cjs", "py", "go", "c", "h", "cpp", "hpp", "cc",
+    "cxx", "hh", "java", "cs", "php", "swift", "kt", "kts", "dart", "scala", "rb", "sql",
+    "lua", "sh", "ps1", "vue", "svelte",
+];
+
+const IGNORED_DIRS: &[&str] = &[
+    ".git",
+    "node_modules",
+    "target",
+    "dist",
+    "build",
+    "out",
+    ".next",
+    ".nuxt",
+    "__pycache__",
+    ".venv",
+    "venv",
+    ".idea",
+    ".vscode",
+    "vendor",
+    "bin",
+    "obj",
+];
+
+fn is_ident_byte(b: u8) -> bool {
+    b.is_ascii_alphanumeric() || b == b'_' || b == b'$'
+}
+
+/// 在一行文本中查找全词匹配的 symbol，返回首个匹配的字节偏移
+fn find_whole_word(line: &str, symbol: &str) -> Option<usize> {
+    if symbol.is_empty() || line.len() < symbol.len() {
+        return None;
+    }
+    let bytes = line.as_bytes();
+    let mut start = 0;
+    while let Some(pos) = line[start..].find(symbol) {
+        let idx = start + pos;
+        let end = idx + symbol.len();
+        let prev_ok = idx == 0 || !is_ident_byte(bytes[idx - 1]);
+        let next_ok = end >= bytes.len() || !is_ident_byte(bytes[end]);
+        if prev_ok && next_ok {
+            return Some(idx);
+        }
+        start = idx + 1;
+    }
+    None
+}
+
+/// 判断包含 symbol 的代码行是否为函数/类型/变量定义，返回其定义类别
+fn classify_definition_line(trimmed: &str, symbol: &str, pos_in_trimmed: usize) -> Option<&'static str> {
+    // 跳过单行注释
+    if trimmed.starts_with("//")
+        || trimmed.starts_with('#') && !trimmed.starts_with("#define")
+        || trimmed.starts_with("/*")
+        || trimmed.starts_with('*')
+        || trimmed.starts_with("--")
+    {
+        return None;
+    }
+
+    let before = trimmed[..pos_in_trimmed].trim_end();
+    let after = trimmed[pos_in_trimmed + symbol.len()..].trim_start();
+
+    // 1. 排除点号或成员访问（如 obj.foo()、ptr->foo()、::foo() 调用）
+    if before.ends_with('.') || before.ends_with("->") {
+        return None;
+    }
+
+    // 2. 显式关键字定义前缀（跨语言通用）
+    let last_token = before
+        .rsplit(|c: char| !c.is_ascii_alphanumeric() && c != '_')
+        .find(|s| !s.is_empty())
+        .unwrap_or("");
+
+    match last_token {
+        "fn" | "def" | "func" | "function" | "sub" => return Some("function"),
+        "class" | "struct" | "interface" | "trait" | "impl" | "enum" | "record" | "protocol" => {
+            return Some("class")
+        }
+        "type" | "typedef" | "namespace" | "module" | "mod" => return Some("type"),
+        "define" if before.starts_with("#") => return Some("function"),
+        "const" | "let" | "var" | "static" | "val" => {
+            if after.starts_with('=') || after.starts_with(':') {
+                // 判断是否为箭头函数或函数表达式
+                if after.contains("=>") || after.contains("function") {
+                    return Some("function");
+                }
+                return Some("variable");
+            }
+        }
+        _ => {}
+    }
+
+    // 3. Go 接收器方法：`func (r *Repo) Symbol(`
+    if trimmed.starts_with("func ") && before.ends_with(')') && after.starts_with('(') {
+        return Some("method");
+    }
+
+    // 4. C / C++ / Java / C# / TS / JS 类方法或函数声明：`[修饰符/返回类型] symbol(...) {`
+    if after.starts_with('(') || after.starts_with('<') {
+        // 排除常见控制流与调用语句前缀
+        if matches!(
+            last_token,
+            "if" | "for" | "while" | "switch" | "catch" | "return" | "throw" | "new" | "await" | "yield" | "else" | "case" | "sizeof" | "typeof" | "delete"
+        ) {
+            return None;
+        }
+        // 排除赋值调用 `x = foo(...)` 或参数内部调用 `bar(foo(...))`
+        if before.contains('=') || before.contains('(') || before.ends_with(',') || before.ends_with('!') {
+            return None;
+        }
+        // 行尾通常有 `{` 或 `:` 或多行参数列表（不能是普通语句 `;` 结尾，除非是头文件声明）
+        let clean_line = trimmed.split("//").next().unwrap_or(trimmed).trim_end();
+        if clean_line.ends_with('{') || clean_line.ends_with(") {") || clean_line.ends_with("){") {
+            // 有返回类型或修饰符，或行首直接是方法名（TS/JS class method）
+            if !before.is_empty() || after.contains(")") {
+                return Some(if before.is_empty() { "method" } else { "function" });
+            }
+        }
+    }
+
+    None
+}
+
+/// 向上寻找最近的工程根目录（存在 .git / package.json / Cargo.toml / pyproject.toml / go.mod），最多向上退 2 层
+fn resolve_scan_root(start: &Path) -> PathBuf {
+    let base_dir = if start.is_dir() {
+        start.to_path_buf()
+    } else {
+        start.parent().map(Path::to_path_buf).unwrap_or_else(|| start.to_path_buf())
+    };
+    let markers = [".git", "package.json", "Cargo.toml", "pyproject.toml", "go.mod", "pom.xml", "CMakeLists.txt"];
+    let mut cur = base_dir.as_path();
+    for _ in 0..3 {
+        for m in markers {
+            if cur.join(m).exists() {
+                return cur.to_path_buf();
+            }
+        }
+        if let Some(p) = cur.parent() {
+            if !p.as_os_str().is_empty() {
+                cur = p;
+                continue;
+            }
+        }
+        break;
+    }
+    base_dir
+}
+
+/// 收集工程目录下的源码文件（广度优先，限制最多 1200 个源码文件，单文件 <= 2MB）
+fn collect_source_files(root: &Path, max_files: usize) -> Vec<PathBuf> {
+    let mut result = Vec::new();
+    let mut queue = std::collections::VecDeque::new();
+    queue.push_back((root.to_path_buf(), 0usize));
+
+    while let Some((dir, depth)) = queue.pop_front() {
+        if result.len() >= max_files || depth > 6 {
+            break;
+        }
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            if result.len() >= max_files {
+                break;
+            }
+            let name = entry.file_name().to_string_lossy().to_string();
+            if name.starts_with('.') {
+                continue;
+            }
+            let path = entry.path();
+            let Ok(ft) = entry.file_type() else {
+                continue;
+            };
+            if ft.is_dir() {
+                if !IGNORED_DIRS.iter().any(|&ig| ig.eq_ignore_ascii_case(&name)) {
+                    queue.push_back((path, depth + 1));
+                }
+            } else if ft.is_file() {
+                let ext = lower_ext(&name);
+                if CODE_EXTS.contains(&ext.as_str()) {
+                    if let Ok(meta) = entry.metadata() {
+                        if meta.len() <= 2 * 1024 * 1024 {
+                            result.push(path);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    result
+}
+
+/// 在工作区目录中极速检索符号定义（mode = "defs"）或全部引用（mode = "refs"）
+#[tauri::command]
+pub async fn search_workspace_symbols(
+    dir_path: String,
+    symbol: String,
+    mode: String,
+) -> Result<Vec<WorkspaceCodeMatch>, String> {
+    let sym = symbol.trim().to_string();
+    if sym.len() < 2 {
+        return Ok(Vec::new());
+    }
+    let start_path = validate_path(&dir_path)?;
+    let root = resolve_scan_root(&start_path);
+    let only_defs = mode != "refs";
+    let max_matches = if only_defs { 50 } else { 250 };
+
+    let files = collect_source_files(&root, 1200);
+    let mut matches = Vec::new();
+
+    for file_path in files {
+        if matches.len() >= max_matches {
+            break;
+        }
+        let Ok(bytes) = std::fs::read(&file_path) else {
+            continue;
+        };
+        let content = String::from_utf8_lossy(&bytes);
+        // 快速初筛：不包含该子串的文件直接跳过
+        if !content.contains(&sym) {
+            continue;
+        }
+
+        let lines: Vec<&str> = content.lines().collect();
+        let file_name = file_path
+            .file_name()
+            .map(|s| s.to_string_lossy().to_string())
+            .unwrap_or_default();
+        let path_str = file_path.to_string_lossy().to_string();
+
+        for (idx, &raw_line) in lines.iter().enumerate() {
+            if matches.len() >= max_matches {
+                break;
+            }
+            let Some(byte_col) = find_whole_word(raw_line, &sym) else {
+                continue;
+            };
+            let trimmed = raw_line.trim();
+            let def_kind = find_whole_word(trimmed, &sym)
+                .and_then(|pos| classify_definition_line(trimmed, &sym, pos));
+
+            let is_def = def_kind.is_some();
+            if only_defs && !is_def {
+                continue;
+            }
+
+            let mut preview_lines = Vec::new();
+            if is_def {
+                let start_line = idx.saturating_sub(3);
+                let end_line = (idx + 14).min(lines.len());
+                for (p_idx, &p_line) in lines[start_line..end_line].iter().enumerate() {
+                    preview_lines.push(SnippetLine {
+                        line: start_line + p_idx + 1,
+                        text: p_line.chars().take(180).collect(),
+                    });
+                }
+            }
+
+            let col = raw_line[..byte_col].chars().count() + 1;
+            matches.push(WorkspaceCodeMatch {
+                path: path_str.clone(),
+                file_name: file_name.clone(),
+                line: idx + 1,
+                col,
+                line_text: trimmed.chars().take(180).collect(),
+                kind: def_kind.unwrap_or("reference").to_string(),
+                is_definition: is_def,
+                preview_lines,
+            });
+        }
+    }
+
+    // 定义排在前面
+    matches.sort_by(|a, b| b.is_definition.cmp(&a.is_definition));
+    Ok(matches)
+}

@@ -35,6 +35,14 @@ import {
   saveActive,
   saveActiveAs,
 } from "../utils/fileActions";
+import {
+  goToSymbolDefinition,
+  peekSymbolDefinition,
+  openSymbolReferences,
+  navigateHistoryBack,
+  navigateHistoryForward,
+  useCodeNavStore,
+} from "../utils/codeNavigation";
 import { matchesShortcut } from "../utils/shortcuts";
 import { APP_NAME } from "../utils/constants";
 import type { ShortcutId } from "../types";
@@ -165,8 +173,26 @@ export function useKeyboardShortcuts(): void {
             dialogs.setShortcutsVisible(false);
             return;
           }
+          if (useCodeNavStore.getState().peekState?.visible) {
+            useCodeNavStore.getState().closePeek();
+            return;
+          }
           if (useSearchStore.getState().visible) {
             useSearchStore.getState().close();
+          }
+          return;
+        }
+        // F12：转到定义；Alt+F12：速览定义；Shift+F12：查找所有引用
+        if (event.key === "F12") {
+          const activeId = useAppStore.getState().activeId;
+          if (!activeId) return;
+          event.preventDefault();
+          if (event.altKey) {
+            void peekSymbolDefinition(activeId);
+          } else if (event.shiftKey) {
+            void openSymbolReferences(activeId);
+          } else {
+            void goToSymbolDefinition(activeId);
           }
           return;
         }
@@ -176,6 +202,22 @@ export function useKeyboardShortcuts(): void {
           const search = useSearchStore.getState();
           if (!search.visible) search.open(false);
           search.step(event.shiftKey ? -1 : 1);
+          return;
+        }
+        // Alt+← / Alt+→ 代码导航后退 / 前进
+        if (event.altKey && !event.shiftKey && (event.key === "ArrowLeft" || event.key === "ArrowRight")) {
+          event.preventDefault();
+          if (event.key === "ArrowLeft") {
+            void navigateHistoryBack();
+          } else {
+            void navigateHistoryForward();
+          }
+          return;
+        }
+        // 聚焦左右栏：Alt+1 / Alt+2
+        if (event.altKey && !event.shiftKey && (key === "1" || key === "2")) {
+          event.preventDefault();
+          useAppStore.getState().setActivePane(key === "1" ? 0 : 1);
           return;
         }
         // Alt+↑/↓ 上下移动行；Shift+Alt+↑/↓ 复制行
@@ -205,13 +247,6 @@ export function useKeyboardShortcuts(): void {
       if (event.ctrlKey && !event.shiftKey && !event.altKey && (event.key === "\\" || code === "Backslash")) {
         event.preventDefault();
         useAppStore.getState().toggleSplit();
-        return;
-      }
-
-      // 聚焦左右栏：Alt+1 / Alt+2
-      if (event.altKey && !event.ctrlKey && !event.shiftKey && (key === "1" || key === "2")) {
-        event.preventDefault();
-        useAppStore.getState().setActivePane(key === "1" ? 0 : 1);
         return;
       }
 
@@ -337,14 +372,20 @@ export function useKeyboardShortcuts(): void {
         case "=":
         case "+": {
           event.preventDefault();
-          const { fontSize, set } = useSettingsStore.getState();
-          set("fontSize", Math.min(24, fontSize + 1));
+          const activeDoc = getActiveDoc();
+          if (activeDoc) {
+            const base = activeDoc.fontSize ?? useSettingsStore.getState().fontSize;
+            useAppStore.getState().patchDoc(activeDoc.id, { fontSize: Math.min(32, base + 1) });
+          }
           break;
         }
         case "-": {
           event.preventDefault();
-          const { fontSize, set } = useSettingsStore.getState();
-          set("fontSize", Math.max(11, fontSize - 1));
+          const activeDoc = getActiveDoc();
+          if (activeDoc) {
+            const base = activeDoc.fontSize ?? useSettingsStore.getState().fontSize;
+            useAppStore.getState().patchDoc(activeDoc.id, { fontSize: Math.max(10, base - 1) });
+          }
           break;
         }
         case "q": {
@@ -397,19 +438,6 @@ export function useKeyboardShortcuts(): void {
     // 使用捕获阶段，保证应用快捷键优先于 CodeMirror 的内部按键绑定
     window.addEventListener("keydown", handler, true);
     return () => window.removeEventListener("keydown", handler, true);
-  }, []);
-
-  // Ctrl+滚轮缩放字号
-  useEffect(() => {
-    const onWheel = (event: WheelEvent) => {
-      if (!event.ctrlKey) return;
-      event.preventDefault();
-      const { fontSize, set } = useSettingsStore.getState();
-      const next = Math.min(24, Math.max(11, fontSize + (event.deltaY < 0 ? 1 : -1)));
-      if (next !== fontSize) set("fontSize", next);
-    };
-    window.addEventListener("wheel", onWheel, { passive: false });
-    return () => window.removeEventListener("wheel", onWheel);
   }, []);
 }
 

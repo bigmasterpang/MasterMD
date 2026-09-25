@@ -417,7 +417,7 @@ export function PdfViewer({ docId, pane, isDark }: PdfViewerProps) {
     return () => window.removeEventListener("pdf-jump-to-page" as any, handler);
   }, [docId, scrollToPage]);
 
-  // 支持 Ctrl + 滚轮一体化缩放
+  // 支持 Ctrl + 滚轮一体化缩放（仅作用于当前 PDF 视口，不影响其它分栏）
   useEffect(() => {
     const container = containerRef.current;
     if (!container) return;
@@ -425,6 +425,7 @@ export function PdfViewer({ docId, pane, isDark }: PdfViewerProps) {
     const handleWheel = (e: WheelEvent) => {
       if (e.ctrlKey || e.metaKey) {
         e.preventDefault();
+        e.stopPropagation();
         const delta = e.deltaY < 0 ? 0.15 : -0.15;
         setFitMode("custom");
         setScale((prev) => Math.max(0.3, Math.min(4.0, Number((prev + delta).toFixed(2)))));

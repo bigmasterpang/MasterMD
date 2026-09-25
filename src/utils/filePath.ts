@@ -13,6 +13,11 @@ export function normalizeSlashes(p: string): string {
   return p.replace(/[\\/]+/g, "\\");
 }
 
+/** 规范化路径（统一斜杠并转为小写），用于跨文件比对 */
+export function normalizePath(p: string): string {
+  return normalizeSlashes(p).toLowerCase();
+}
+
 export function extName(p: string): string {
   const base = p.replace(/[\\/]+$/, "").split(/[\\/]/).pop() ?? "";
   const idx = base.lastIndexOf(".");

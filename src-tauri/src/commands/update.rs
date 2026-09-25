@@ -24,7 +24,7 @@ use windows::Win32::Networking::WinHttp::*;
 /// 软件中心节点（主站优先，失败回退国内纯 IP 节点）
 pub const PORTAL_NODES: [&str; 2] = ["https://master.dapang.wang", "http://106.14.225.57"];
 /// 软件中心中的应用标识与平台
-pub const APP_ID: &str = "mastermd";
+pub const APP_ID: &str = "masteredit";
 pub const PLATFORM: &str = "windows";
 
 /* ------------------------------------------------------------------ */

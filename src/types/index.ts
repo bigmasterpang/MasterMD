@@ -82,6 +82,8 @@ export interface DocState {
   scrollTop: number;
   /** 所属分栏：0（左栏/默认），1（右栏） */
   pane: 0 | 1;
+  /** 当前文档独立缩放字号（未设置时跟随全局默认字号，互不影响双栏） */
+  fontSize?: number;
   /** 新建文档类型：markdown 或 blank 或 pdf */
   docType?: "markdown" | "blank" | "pdf";
   /** PDF 文件的二进制数据（Base64 编码，编辑如删页/旋转后会更新并置 isDirty） */

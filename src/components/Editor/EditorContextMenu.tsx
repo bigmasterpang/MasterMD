@@ -31,19 +31,38 @@ import {
   toggleUnderline,
   transformCase,
 } from "../../utils/editorCommands";
+import {
+  goToSymbolDefinition,
+  navigateHistoryBack,
+  navigateHistoryForward,
+  openSymbolReferences,
+  peekSymbolDefinition,
+  useCodeNavStore,
+} from "../../utils/codeNavigation";
 import { promptInsert } from "../Toolbar/Toolbar";
 
 interface Props {
   x: number;
   y: number;
+  docId: string;
+  symbol?: string | null;
   hasSelection: boolean;
   onClose: () => void;
 }
 
-/** 编辑器右键菜单：二级菜单分组，避免过长 */
-export function EditorContextMenu({ x, y, hasSelection, onClose }: Props) {
-  const activeDoc = useAppStore((s) => s.docs.find((d) => d.id === s.activeId) ?? null);
-  const isMd = isMarkdownDoc(activeDoc);
+/** 编辑器右键菜单：支持代码符号转到定义/速览/查找引用与 Markdown 编辑分组 */
+export function EditorContextMenu({
+  x,
+  y,
+  docId,
+  symbol,
+  hasSelection,
+  onClose,
+}: Props) {
+  const doc = useAppStore((s) => s.docs.find((d) => d.id === docId) ?? null);
+  const isMd = isMarkdownDoc(doc);
+  const backCount = useCodeNavStore((s) => s.backStack.length);
+  const forwardCount = useCodeNavStore((s) => s.forwardStack.length);
 
   const groups = useMemo<ContextMenuItem[][]>(() => {
     const clipboard: ContextMenuItem[] = [
@@ -157,17 +176,67 @@ export function EditorContextMenu({ x, y, hasSelection, onClose }: Props) {
       ],
     ];
 
-    // 非 Markdown 文档（代码、纯文本、未保存空白文件）：屏蔽所有 Markdown 格式与插入
+    // 非 Markdown 文档（代码、纯文本）：提供代码符号导航（转到定义/速览原函数/分栏定义/查找引用）与历史回退
     if (!isMd) {
-      if (hasSelection) {
-        return [
-          clipboard,
-          [
-            { label: "大小写转换", submenu: transformSubmenu },
-          ],
-        ];
+      const codeGroups: ContextMenuItem[][] = [];
+
+      if (symbol) {
+        const displaySym = symbol.length > 22 ? `${symbol.slice(0, 22)}…` : symbol;
+        codeGroups.push([
+          {
+            label: `转到原函数 / 定义「${displaySym}」`,
+            hint: "F12",
+            icon: "code",
+            onClick: () => void goToSymbolDefinition(docId, symbol),
+          },
+          {
+            label: `速览原函数实现「${displaySym}」`,
+            hint: "Alt+F12",
+            icon: "eye",
+            onClick: () => void peekSymbolDefinition(docId, symbol),
+          },
+          {
+            label: `在右侧分栏打开定义「${displaySym}」`,
+            hint: "Ctrl+Alt+单击",
+            icon: "columns",
+            onClick: () => void goToSymbolDefinition(docId, symbol, { openInSplit: true }),
+          },
+          {
+            label: `查找所有引用「${displaySym}」`,
+            hint: "Shift+F12",
+            icon: "search",
+            onClick: () => void openSymbolReferences(docId, symbol),
+          },
+        ]);
       }
-      return [clipboard];
+
+      if (backCount > 0 || forwardCount > 0) {
+        const navItems: ContextMenuItem[] = [];
+        if (backCount > 0) {
+          navItems.push({
+            label: "返回上一位置",
+            hint: "Alt+←",
+            icon: "arrow-left",
+            onClick: () => void navigateHistoryBack(),
+          });
+        }
+        if (forwardCount > 0) {
+          navItems.push({
+            label: "前进下一位置",
+            hint: "Alt+→",
+            icon: "arrow-right",
+            onClick: () => void navigateHistoryForward(),
+          });
+        }
+        codeGroups.push(navItems);
+      }
+
+      codeGroups.push(clipboard);
+
+      if (hasSelection) {
+        codeGroups.push([{ label: "大小写转换", submenu: transformSubmenu }]);
+      }
+      return codeGroups;
     }
 
     if (hasSelection) {
@@ -191,7 +260,7 @@ export function EditorContextMenu({ x, y, hasSelection, onClose }: Props) {
         { label: "提示块", submenu: calloutSubmenu },
       ],
     ];
-  }, [hasSelection, isMd]);
+  }, [hasSelection, isMd, symbol, docId, backCount, forwardCount]);
 
   return <ContextMenu x={x} y={y} groups={groups} onClose={onClose} />;
 }

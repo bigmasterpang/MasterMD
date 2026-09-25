@@ -80,7 +80,7 @@ if (-not $ReleaseNotes) {
 
 # 5. Publish to both portal nodes
 & (Join-Path $projectRoot "..\tools\publish-release.ps1") `
-    -App "mastermd" `
+    -App "masteredit" `
     -Platform "windows" `
     -FilePath $FilePath `
     -Version $Version `

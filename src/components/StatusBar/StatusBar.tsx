@@ -1,5 +1,6 @@
 import { useMemo } from "react";
 import { useAppStore } from "../../stores/appStore";
+import { useSettingsStore } from "../../stores/settingsStore";
 import { useUpdateStore } from "../../stores/updateStore";
 import { Icon } from "../common/Icon";
 import { countWords, formatBytes } from "../../utils/timing";
@@ -28,8 +29,12 @@ function countChars(text: string): number {
 
 export function StatusBar() {
   const doc = useAppStore((s) => s.docs.find((d) => d.id === s.activeId) ?? null);
+  const defaultFontSize = useSettingsStore((s) => s.fontSize);
   const viewMode = useAppStore((s) => s.viewMode);
   const updateInfo = useUpdateStore((s) => s.info);
+  const docZoomPercent = doc
+    ? Math.round(((doc.fontSize ?? defaultFontSize) / defaultFontSize) * 100)
+    : 100;
 
   const stats = useMemo(() => {
     const content = doc?.content ?? "";
@@ -121,6 +126,16 @@ export function StatusBar() {
 
       {doc && !isPdfDoc(doc) ? (
         <>
+          <button
+            type="button"
+            onClick={() => useAppStore.getState().patchDoc(doc.id, { fontSize: undefined })}
+            title="当前文档独立缩放比例（Ctrl+滚轮仅缩放所在窗口文档，点击恢复 100%）"
+            className={`rounded px-1 py-0.5 transition-colors hover:bg-hover hover:text-fg ${
+              doc.fontSize != null && doc.fontSize !== defaultFontSize ? "font-medium text-accent" : ""
+            }`}
+          >
+            {docZoomPercent}%
+          </button>
           <span title="文件类型">
             {KIND_LABEL[docKindOf(doc.filePath)]}
             {extName(doc.filePath ?? "") ? ` · ${extName(doc.filePath ?? "")}` : ""}

@@ -17,7 +17,7 @@ export function WelcomeScreen() {
           <div>
             <div className="text-[19px] font-semibold text-fg">{APP_NAME}</div>
             <div className="text-[12px] text-muted">
-              Markdown 查看与简易编辑器 · 作者 {AUTHOR_NAME}（{AUTHOR_NAME_CN}）
+              全能文档与代码查看编辑器（Markdown / PDF / 代码导航） · 作者 {AUTHOR_NAME}（{AUTHOR_NAME_CN}）
             </div>
           </div>
         </div>

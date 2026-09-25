@@ -30,12 +30,18 @@ import { useAppStore, getDocById } from "../../stores/appStore";
 import { isMarkdownDoc, isMarkdownPath } from "../../utils/filePath";
 import { useSearchStore } from "../../stores/searchStore";
 import { useSettingsStore } from "../../stores/settingsStore";
-import { registerEditor } from "../../utils/editorBridge";
+import { registerEditor, unregisterEditor } from "../../utils/editorBridge";
+import {
+  createCodeNavigationExtensions,
+  getSymbolAtOffset,
+} from "../../utils/codeNavigation";
 import { showMessage } from "../../stores/dialogStore";
 import { invoke } from "@tauri-apps/api/core";
 import { createEditorTheme } from "./editorTheme";
 import { searchHighlightField, setSearchHighlight } from "./searchHighlight";
 import { EditorContextMenu } from "./EditorContextMenu";
+import { CodeBreadcrumbBar } from "./CodeBreadcrumbBar";
+import { CodePeekPanel } from "./CodePeekPanel";
 
 interface Props {
   docId: string;
@@ -55,7 +61,11 @@ function markdownSupport(): Extension {
   return markdown({ base: markdownLanguage, codeLanguages: languages });
 }
 
-function buildExtensions(isDark: boolean, doc: ReturnType<typeof getDocById>): Extension[] {
+function buildExtensions(
+  isDark: boolean,
+  doc: ReturnType<typeof getDocById>,
+  docId: string,
+): Extension[] {
   const settings = useSettingsStore.getState();
   const isMd = isMarkdownDoc(doc);
   return [
@@ -72,6 +82,7 @@ function buildExtensions(isDark: boolean, doc: ReturnType<typeof getDocById>): E
     closeBrackets(),
     search({ top: true }),
     searchHighlightField,
+    createCodeNavigationExtensions(docId),
     langCompartment.of(isMd ? markdownSupport() : []),
     EditorState.allowMultipleSelections.of(true),
     indentUnit.of(" ".repeat(settings.tabSize)),
@@ -99,11 +110,16 @@ export function CodeMirrorEditor({ docId, isDark }: Props) {
   const hostRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
   const syncingRef = useRef(false);
-  const [menu, setMenu] = useState<{ x: number; y: number; hasSelection: boolean } | null>(
-    null,
-  );
+  const [menu, setMenu] = useState<{
+    x: number;
+    y: number;
+    hasSelection: boolean;
+    symbolAtCursor: string | null;
+  } | null>(null);
   const doc = useAppStore((s) => s.docs.find((d) => d.id === docId) ?? null);
   const content = doc?.content ?? "";
+  const docFontSize = doc?.fontSize;
+  const globalFontSize = useSettingsStore((s) => s.fontSize);
   const showLineNumbers = useSettingsStore((s) => s.showLineNumbers);
   const wordWrap = useSettingsStore((s) => s.wordWrap);
   const tabSize = useSettingsStore((s) => s.tabSize);
@@ -117,7 +133,7 @@ export function CodeMirrorEditor({ docId, isDark }: Props) {
     const state = EditorState.create({
       doc: initialDoc?.content ?? "",
       extensions: [
-        ...buildExtensions(isDark, initialDoc),
+        ...buildExtensions(isDark, initialDoc, docId),
         EditorView.updateListener.of((update) => {
           if (update.docChanged && !syncingRef.current) {
             useAppStore.getState().setDocContent(docId, update.state.doc.toString());
@@ -142,7 +158,7 @@ export function CodeMirrorEditor({ docId, isDark }: Props) {
               s.activateDoc(docId);
             }
             if (viewRef.current) {
-              registerEditor(viewRef.current);
+              registerEditor(viewRef.current, docId);
             }
             return false;
           },
@@ -152,7 +168,7 @@ export function CodeMirrorEditor({ docId, isDark }: Props) {
               s.activateDoc(docId);
             }
             if (viewRef.current) {
-              registerEditor(viewRef.current);
+              registerEditor(viewRef.current, docId);
             }
             return false;
           },
@@ -198,6 +214,7 @@ export function CodeMirrorEditor({ docId, isDark }: Props) {
 
     const view = new EditorView({ state, parent: host });
     viewRef.current = view;
+    registerEditor(view, docId);
 
     // 代码文件：按扩展名/文件名懒加载对应语言高亮
     const docInfo = getDocById(docId);
@@ -226,7 +243,7 @@ export function CodeMirrorEditor({ docId, isDark }: Props) {
 
     if (useAppStore.getState().activeId === docId) {
       view.focus();
-      registerEditor(view);
+      registerEditor(view, docId);
     }
 
     // 记录滚动位置（节流）
@@ -243,6 +260,7 @@ export function CodeMirrorEditor({ docId, isDark }: Props) {
     return () => {
       view.scrollDOM.removeEventListener("scroll", onScroll);
       if (scrollTimer !== null) window.clearTimeout(scrollTimer);
+      unregisterEditor(docId);
       if (useAppStore.getState().activeId === docId) {
         registerEditor(null);
       }
@@ -257,9 +275,14 @@ export function CodeMirrorEditor({ docId, isDark }: Props) {
   const isActive = useAppStore((s) => s.activeId === docId);
   useEffect(() => {
     if (isActive && viewRef.current) {
-      registerEditor(viewRef.current);
+      registerEditor(viewRef.current, docId);
     }
-  }, [isActive]);
+  }, [isActive, docId]);
+
+  /* ------------------ 分栏文档独立字号变化时重新测量布局 ------------------ */
+  useEffect(() => {
+    viewRef.current?.requestMeasure();
+  }, [docFontSize, globalFontSize]);
 
   /* ------------------------ 外部内容变化同步 ------------------------ */
   useEffect(() => {
@@ -357,10 +380,22 @@ export function CodeMirrorEditor({ docId, isDark }: Props) {
         }
       }
       const current = view.state.selection.main;
+      let symbolAtCursor: string | null = null;
+      if (!current.empty) {
+        const selectedText = view.state.sliceDoc(current.from, current.to).trim();
+        if (/^[A-Za-z_$][A-Za-z0-9_$]*$/.test(selectedText)) {
+          symbolAtCursor = selectedText;
+        }
+      }
+      if (!symbolAtCursor) {
+        const word = getSymbolAtOffset(view.state.doc.toString(), pos ?? current.head);
+        symbolAtCursor = word?.name ?? null;
+      }
       setMenu({
         x: event.clientX,
         y: event.clientY,
         hasSelection: !current.empty,
+        symbolAtCursor,
       });
     };
     host.addEventListener("contextmenu", onContextMenu);
@@ -368,17 +403,23 @@ export function CodeMirrorEditor({ docId, isDark }: Props) {
   }, []);
 
   return (
-    <>
-      <div ref={hostRef} className="h-full w-full overflow-hidden" />
+    <div className="relative flex h-full w-full flex-col overflow-hidden">
+      <CodeBreadcrumbBar docId={docId} />
+      <div className="relative min-h-0 flex-1 overflow-hidden">
+        <div ref={hostRef} className="h-full w-full overflow-hidden" />
+        <CodePeekPanel docId={docId} />
+      </div>
       {menu ? (
         <EditorContextMenu
           x={menu.x}
           y={menu.y}
           hasSelection={menu.hasSelection}
+          docId={docId}
+          symbol={menu.symbolAtCursor}
           onClose={() => setMenu(null)}
         />
       ) : null}
-    </>
+    </div>
   );
 }
 
