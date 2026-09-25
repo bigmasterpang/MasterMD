@@ -12,6 +12,7 @@ import {
   addPdfHighlight,
   addPdfNote,
   base64ToBytes,
+  cleanBurnedHighlightsFromPdf,
   clearAllHighlights,
   clearPageHighlights,
   copyCanvasToClipboard,
@@ -19,6 +20,7 @@ import {
   deletePdfPage,
   extractPdfPage,
   PDF_PAPER_THEMES,
+  recordAutoCleanedCount,
   redoPdf,
   registerPdfDocument,
   removePdfHighlight,
@@ -174,7 +176,21 @@ export function PdfViewer({ docId, pane, isDark }: PdfViewerProps) {
       setError(null);
 
       try {
-        const rawBytes = base64ToBytes(pdfBase64);
+        // 自动检测并剥离旧版残留的物理高亮涂层，打开即恢复纯净
+        let effectiveBase64 = pdfBase64;
+        const { cleanedBase64, removedCount } = await cleanBurnedHighlightsFromPdf(pdfBase64);
+        if (removedCount > 0 && cleanedBase64 !== pdfBase64) {
+          effectiveBase64 = cleanedBase64;
+          recordAutoCleanedCount(docId, removedCount);
+          loadedBase64Ref.current = cleanedBase64;
+          useAppStore.getState().patchDoc(docId, {
+            pdfBase64: cleanedBase64,
+            cleanPdfBase64: cleanedBase64,
+            isDirty: true,
+          });
+        }
+
+        const rawBytes = base64ToBytes(effectiveBase64);
         const loadingTask = pdfjsLib.getDocument({
           data: rawBytes,
           password: password ?? doc?.pdfPassword,
@@ -198,7 +214,7 @@ export function PdfViewer({ docId, pane, isDark }: PdfViewerProps) {
         const proxy = await loadingTask.promise;
         setPdfProxy(proxy);
         setNumPages(proxy.numPages);
-        loadedBase64Ref.current = pdfBase64;
+        loadedBase64Ref.current = effectiveBase64;
 
         // 关键修复：重载或旋转时保留用户当前的页码，而不是重置到第 1 页
         const existingDoc = useAppStore.getState().docs.find((d) => d.id === docId);
@@ -213,32 +229,52 @@ export function PdfViewer({ docId, pane, isDark }: PdfViewerProps) {
           pdfCurrentPage: safePage,
         });
 
-        // 提取大纲书签
+        // 递归提取完整多级大纲书签树（支持 Adobe Acrobat Pro DC 级别的多层子章节展示）
+        const resolveOutlinePage = async (dest: any): Promise<number | undefined> => {
+          if (!dest) return undefined;
+          try {
+            let destRef: any = dest;
+            if (typeof destRef === "string") {
+              destRef = await proxy.getDestination(destRef);
+            }
+            if (Array.isArray(destRef) && destRef.length > 0 && destRef[0] != null) {
+              const target = destRef[0];
+              if (typeof target === "number") {
+                return target + 1;
+              }
+              if (typeof target === "object") {
+                return (await proxy.getPageIndex(target)) + 1;
+              }
+            }
+          } catch {
+            /* ignore */
+          }
+          return undefined;
+        };
+
+        const parseOutlineNodes = async (nodes: any[]): Promise<OutlineItem[]> => {
+          const result: OutlineItem[] = [];
+          for (const item of nodes) {
+            const pageIdx = await resolveOutlinePage(item.dest);
+            const children =
+              Array.isArray(item.items) && item.items.length > 0
+                ? await parseOutlineNodes(item.items)
+                : undefined;
+            result.push({
+              title: (item.title || "").replace(/\r?\n/g, " ").trim() || "未命名书签",
+              dest: item.dest,
+              pageIndex: pageIdx ?? children?.[0]?.pageIndex,
+              items: children,
+            });
+          }
+          return result;
+        };
+
         let parsedOutline: OutlineItem[] = [];
         try {
           const rawOutline = await proxy.getOutline();
           if (rawOutline && rawOutline.length > 0) {
-            for (const item of rawOutline) {
-              let pageIdx: number | undefined;
-              if (item.dest) {
-                try {
-                  let destRef: any = item.dest;
-                  if (typeof destRef === "string") {
-                    destRef = (await proxy.getDestination(destRef)) as any;
-                  }
-                  if (Array.isArray(destRef) && destRef[0]) {
-                    pageIdx = (await proxy.getPageIndex(destRef[0])) + 1;
-                  }
-                } catch {
-                  /* ignore */
-                }
-              }
-              parsedOutline.push({
-                title: item.title,
-                dest: item.dest,
-                pageIndex: pageIdx,
-              });
-            }
+            parsedOutline = await parseOutlineNodes(rawOutline);
           }
         } catch {
           parsedOutline = [];
@@ -806,6 +842,24 @@ export function PdfViewer({ docId, pane, isDark }: PdfViewerProps) {
         },
       ],
       [
+        {
+          label: "清除本页所有高亮",
+          icon: "trash",
+          onClick: () => {
+            setPageContextMenu(null);
+            targetPageAfterReload.current = currentPage;
+            void clearPageHighlights(docId, pNum);
+          },
+        },
+        {
+          label: "清除全部高亮",
+          icon: "trash",
+          onClick: () => {
+            setPageContextMenu(null);
+            targetPageAfterReload.current = currentPage;
+            void clearAllHighlights(docId);
+          },
+        },
         {
           label: "清除历史物理高亮涂层 (恢复纯净原貌)",
           icon: "refresh",

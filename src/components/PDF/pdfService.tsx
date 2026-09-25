@@ -1,6 +1,14 @@
 import { useEffect, useRef, useState } from "react";
 import type * as pdfjsLib from "pdfjs-dist";
-import { PDFDocument, degrees, rgb } from "pdf-lib";
+import {
+  PDFArray,
+  PDFDocument,
+  PDFName,
+  PDFRawStream,
+  decodePDFRawStream,
+  degrees,
+  rgb,
+} from "pdf-lib";
 import { useAppStore } from "../../stores/appStore";
 import { askConfirm, showMessage } from "../../stores/dialogStore";
 import { fileName } from "../../utils/filePath";
@@ -360,13 +368,23 @@ export function removePdfHighlight(docId: string, highlightId: string) {
   });
 }
 
-/** 清除指定页面的所有高亮标注 */
-export function clearPageHighlights(docId: string, pageNum: number) {
+/** 清除指定页面的所有高亮标注（同时深度净化该页历史物理涂层） */
+export async function clearPageHighlights(docId: string, pageNum: number) {
   const doc = useAppStore.getState().docs.find((d) => d.id === docId);
-  if (!doc || !doc.pdfHighlights) return;
+  if (!doc) return;
   recordPdfSnapshot(docId);
+  let cleanedBase64 = doc.pdfBase64;
+  if (doc.pdfBase64) {
+    const res = await cleanBurnedHighlightsFromPdf(doc.pdfBase64, pageNum);
+    if (res.removedCount > 0) {
+      cleanedBase64 = res.cleanedBase64;
+    }
+  }
   useAppStore.getState().patchDoc(docId, {
-    pdfHighlights: doc.pdfHighlights.filter((h) => h.page !== pageNum),
+    pdfHighlights: (doc.pdfHighlights ?? []).filter((h) => h.page !== pageNum),
+    ...(cleanedBase64 && cleanedBase64 !== doc.pdfBase64
+      ? { pdfBase64: cleanedBase64, cleanPdfBase64: cleanedBase64 }
+      : {}),
     isDirty: true,
   });
 }
@@ -510,11 +528,19 @@ export async function burnHighlightsToPdf(
   }
 }
 
+const autoCleanedCountMap = new Map<string, number>();
+
+export function recordAutoCleanedCount(docId: string, count: number) {
+  autoCleanedCountMap.set(docId, (autoCleanedCountMap.get(docId) ?? 0) + count);
+}
+
 /**
  * 修复与清洗历史版本被 burnHighlightsToPdf 写入的永久物理高亮涂层
+ * 采用 pdf-lib 内置 decodePDFRawStream 与 PDFArray.remove 原地剥离，彻底规避打包混淆导致的类型失效与浅拷贝失效
  */
 export async function cleanBurnedHighlightsFromPdf(
   base64Data: string,
+  targetPageNum?: number,
 ): Promise<{ cleanedBase64: string; removedCount: number }> {
   try {
     const rawBytes = base64ToBytes(base64Data);
@@ -522,83 +548,87 @@ export async function cleanBurnedHighlightsFromPdf(
     let removedCount = 0;
 
     for (let p = 0; p < pdfDoc.getPageCount(); p++) {
+      if (targetPageNum !== undefined && p + 1 !== targetPageNum) continue;
+
       const page = pdfDoc.getPage(p);
       const contents = page.node.Contents();
-      if (!contents) continue;
 
-      if (contents.constructor?.name === "PDFArray") {
-        const arr = (contents as any).asArray();
-        const keptRefs: any[] = [];
+      // 1. 剥离由 pdf-lib drawRectangle 追加的物理高亮内容流
+      if (
+        contents &&
+        (contents instanceof PDFArray ||
+          (typeof (contents as any).size === "function" &&
+            typeof (contents as any).remove === "function"))
+      ) {
+        const arr = contents as PDFArray;
+        for (let i = arr.size() - 1; i >= 0; i--) {
+          const stream = arr.lookup(i);
+          let text = "";
 
-        for (let i = 0; i < arr.length; i++) {
-          const ref = arr[i];
-          const stream = pdfDoc.context.lookup(ref);
-          let isBurned = false;
-
-          if (stream && typeof (stream as any).getContents === "function") {
+          if (
+            stream instanceof PDFRawStream ||
+            (stream && typeof (stream as any).getContents === "function")
+          ) {
             try {
-              const raw: Uint8Array = (stream as any).getContents();
-              let text = "";
-
-              // 1. 先尝试直接解码（未压缩纯文本流）
+              const decoded = decodePDFRawStream(stream as PDFRawStream).decode();
+              text = new TextDecoder("latin1").decode(decoded);
+            } catch {
               try {
+                const raw: Uint8Array = (stream as any).getContents();
                 text = new TextDecoder("latin1").decode(raw);
               } catch {
                 /* ignore */
               }
-
-              // 2. 如果直接解码未匹配到特征，尝试 deflate 解压（zlib 或 raw deflate）
-              if (
-                !text.includes("0.92 0.23") &&
-                !text.includes("0.45 0.75") &&
-                !text.includes("0.3 0.9 0.4")
-              ) {
-                try {
-                  const ds = new DecompressionStream("deflate");
-                  const writer = ds.writable.getWriter();
-                  writer.write(raw as any);
-                  writer.close();
-                  text = await new Response(ds.readable).text();
-                } catch {
-                  try {
-                    const dsRaw = new DecompressionStream("deflate-raw");
-                    const writer = dsRaw.writable.getWriter();
-                    writer.write(raw as any);
-                    writer.close();
-                    text = await new Response(dsRaw.readable).text();
-                  } catch {
-                    /* ignore decompression error */
-                  }
-                }
-              }
-
-              // 3. 严格特征识别：必须匹配高亮调色板 RGB，且不能包含文字正文指令 (BT)
-              const hasHighlightColor =
-                text.includes("1 0.92 0.23 rg") ||
-                text.includes("0.3 0.9 0.4 rg") ||
-                text.includes("1 0.45 0.75 rg") ||
-                (text.includes("0.92 0.23") && text.includes("rg")) ||
-                (text.includes("0.45 0.75") && text.includes("rg")) ||
-                (text.includes("0.3 0.9 0.4") && text.includes("rg"));
-
-              if (hasHighlightColor && !text.includes("BT") && !text.includes("ET")) {
-                isBurned = true;
-              }
+            }
+          } else if (stream && typeof (stream as any).getContentsString === "function") {
+            try {
+              text = (stream as any).getContentsString();
             } catch {
-              /* ignore error */
+              /* ignore */
             }
           }
 
-          if (isBurned) {
-            removedCount++;
-          } else {
-            keptRefs.push(ref);
+          if (text) {
+            const hasHighlightColor =
+              text.includes("1 0.92 0.23 rg") ||
+              text.includes("0.3 0.9 0.4 rg") ||
+              text.includes("1 0.45 0.75 rg") ||
+              (text.includes("0.92 0.23") && text.includes("rg")) ||
+              (text.includes("0.45 0.75") && text.includes("rg")) ||
+              (text.includes("0.3 0.9 0.4") && text.includes("rg")) ||
+              (text.includes("/GS-") && text.includes("0 w") && text.includes("0 d"));
+
+            if (
+              hasHighlightColor &&
+              !text.includes("BT") &&
+              !text.includes("ET") &&
+              !text.includes("Do")
+            ) {
+              arr.remove(i);
+              removedCount++;
+            }
           }
         }
+      }
 
-        if (keptRefs.length < arr.length) {
-          arr.length = 0;
-          for (const r of keptRefs) arr.push(r);
+      // 2. 剥离页面可能存在的 PDF 原生 Highlight 注释对象
+      const annots = page.node.Annots();
+      if (
+        annots &&
+        (annots instanceof PDFArray ||
+          (typeof (annots as any).size === "function" &&
+            typeof (annots as any).remove === "function"))
+      ) {
+        const annotArr = annots as PDFArray;
+        for (let i = annotArr.size() - 1; i >= 0; i--) {
+          const annot = annotArr.lookup(i) as any;
+          if (annot && typeof annot.lookup === "function") {
+            const subtype = annot.lookup(PDFName.of("Subtype"));
+            if (subtype && String(subtype) === "/Highlight") {
+              annotArr.remove(i);
+              removedCount++;
+            }
+          }
         }
       }
     }
@@ -620,21 +650,28 @@ export async function repairBurnedPdfDocument(docId: string): Promise<boolean> {
   if (!doc?.pdfBase64) return false;
 
   const { cleanedBase64, removedCount } = await cleanBurnedHighlightsFromPdf(doc.pdfBase64);
-  if (removedCount === 0) {
+  const prevAutoCleaned = autoCleanedCountMap.get(docId) ?? 0;
+
+  if (removedCount === 0 && prevAutoCleaned === 0) {
     await showMessage("无需修复", "未检测到由旧版软件烙印的物理高亮涂层，文档内容已是纯净状态。");
     return false;
   }
 
-  recordPdfSnapshot(docId);
-  useAppStore.getState().patchDoc(docId, {
-    pdfBase64: cleanedBase64,
-    cleanPdfBase64: cleanedBase64,
-    isDirty: true,
-  });
+  if (removedCount > 0) {
+    recordPdfSnapshot(docId);
+    useAppStore.getState().patchDoc(docId, {
+      pdfBase64: cleanedBase64,
+      cleanPdfBase64: cleanedBase64,
+      isDirty: true,
+    });
+  }
+
+  const totalRemoved = removedCount + prevAutoCleaned;
+  autoCleanedCountMap.set(docId, 0);
 
   await showMessage(
     "恢复成功",
-    `已成功检测并清除 ${removedCount} 处历史遗留的永久高亮涂层！文档已恢复至原始纯净版。可使用 Ctrl+S 保存修复结果。`,
+    `已成功检测并清除 ${totalRemoved} 处历史遗留的永久高亮涂层！文档已恢复至原始纯净版，请按 Ctrl+S 保存修复结果。`,
   );
   return true;
 }

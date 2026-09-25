@@ -50,7 +50,7 @@ async fn open_in_new_window(app: tauri::AppHandle, path: String) -> Result<(), S
     let title = std::path::Path::new(&path)
         .file_name()
         .map(|s| s.to_string_lossy().to_string())
-        .unwrap_or_else(|| "MasterMD".to_string());
+        .unwrap_or_else(|| "MasterEdit".to_string());
     let encoded = percent_encode(&path);
     let label = format!(
         "win-{}",

@@ -117,7 +117,7 @@ export function buildExportHtml(
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="generator" content="MasterMD">
+<meta name="generator" content="MasterEdit">
 <meta name="author" content="Master Wang（王大师）">
 <title>${escapeHtml(title)}</title>
 <style>${EXPORT_CSS}</style>
@@ -128,7 +128,7 @@ export function buildExportHtml(
 ${bodyHtml}
 </div>
 </div>
-<!-- 内联图片 ${embeddedImages} 张；由 MasterMD 导出 · Master Wang（王大师） -->
+<!-- 内联图片 ${embeddedImages} 张；由 MasterEdit 导出 · Master Wang（王大师） -->
 </body>
 </html>
 `;

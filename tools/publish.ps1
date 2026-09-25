@@ -38,18 +38,24 @@ $bundleDir = Join-Path $releaseDir "bundle\nsis"
 if (-not $FilePath) {
     if ($Mode -eq "portable") {
         # Portable single-file build: app frontend is embedded in the exe
-        $built = Join-Path $releaseDir "MasterMD.exe"
+        $built = Join-Path $releaseDir "MasterEdit.exe"
+        if (-not (Test-Path -LiteralPath $built)) {
+            $built = Join-Path $releaseDir "MasterMD.exe"
+        }
         if (-not (Test-Path -LiteralPath $built)) {
             $built = Join-Path $releaseDir "mastermd.exe"
         }
         if (-not (Test-Path -LiteralPath $built)) {
             throw "Portable binary not found: $built (run with -Build first)"
         }
-        $target = Join-Path $releaseDir "MasterMD_${Version}_x64.exe"
+        $target = Join-Path $releaseDir "MasterEdit_${Version}_x64.exe"
         Copy-Item -LiteralPath $built -Destination $target -Force
         $FilePath = $target
     } else {
-        $target = Join-Path $bundleDir "MasterMD_${Version}_x64-setup.exe"
+        $target = Join-Path $bundleDir "MasterEdit_${Version}_x64-setup.exe"
+        if (-not (Test-Path -LiteralPath $target)) {
+            $target = Join-Path $bundleDir "MasterMD_${Version}_x64-setup.exe"
+        }
         if (-not (Test-Path -LiteralPath $target)) {
             $target = Join-Path $bundleDir "mastermd_${Version}_x64-setup.exe"
         }
@@ -69,7 +75,7 @@ if (-not $ReleaseNotes) {
     try {
         $ReleaseNotes = (git -C $projectRoot log -1 --pretty=%B).Trim()
     } catch { }
-    if (-not $ReleaseNotes) { $ReleaseNotes = "MasterMD $Version released" }
+    if (-not $ReleaseNotes) { $ReleaseNotes = "MasterEdit $Version released" }
 }
 
 # 5. Publish to both portal nodes

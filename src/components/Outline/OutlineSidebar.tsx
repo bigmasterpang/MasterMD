@@ -18,6 +18,7 @@ import {
   rotatePdfPage,
   usePdfOutline,
   usePdfProxy,
+  type OutlineItem,
 } from "../PDF/pdfService";
 import { askConfirm, showMessage } from "../../stores/dialogStore";
 import { fileName } from "../../utils/filePath";
@@ -55,7 +56,16 @@ export function OutlineSidebar({ previewRef, standalone = false }: Props) {
   return <MarkdownOutlineSection doc={doc} previewRef={previewRef} standalone={standalone} />;
 }
 
-/** PDF 专用大纲、缩略图与注释便签导航组件 */
+interface FlatPdfOutlineRow {
+  key: string;
+  title: string;
+  pageIndex?: number;
+  depth: number;
+  hasChildren: boolean;
+  collapsed: boolean;
+}
+
+/** PDF 专用大纲、缩略图与注释便签导航组件（支持完整多级树形展开与折叠） */
 function PdfOutlineSection({
   doc,
   standalone,
@@ -67,6 +77,7 @@ function PdfOutlineSection({
   const pdfOutline = usePdfOutline(doc.id);
   const [tab, setTab] = useState<"outline" | "thumbnails" | "annotations">("outline");
   const [filterText, setFilterText] = useState("");
+  const [collapsedKeys, setCollapsedKeys] = useState<Set<string>>(() => new Set());
   const [draggedPageIndex, setDraggedPageIndex] = useState<number | null>(null);
   const listRef = useRef<HTMLDivElement>(null);
 
@@ -76,12 +87,105 @@ function PdfOutlineSection({
   // 统计标注与便签总数
   const totalAnnotations = (doc.pdfHighlights?.length || 0) + (doc.pdfNotes?.length || 0);
 
-  // 过滤大纲
-  const filteredOutline = useMemo(() => {
+  // 收集所有拥有子节点的父节点 key（用于一键全部展开/全部折叠）
+  const allParentKeys = useMemo(() => {
+    const keys: string[] = [];
+    const walk = (nodes: OutlineItem[], prefix: string) => {
+      nodes.forEach((node, idx) => {
+        const key = prefix ? `${prefix}-${idx}` : `${idx}`;
+        if (node.items && node.items.length > 0) {
+          keys.push(key);
+          walk(node.items, key);
+        }
+      });
+    };
+    walk(pdfOutline, "");
+    return keys;
+  }, [pdfOutline]);
+
+  // 递归过滤并展平多级大纲树
+  const flatOutlineRows = useMemo<FlatPdfOutlineRow[]>(() => {
     const q = filterText.trim().toLowerCase();
-    if (!q) return pdfOutline;
-    return pdfOutline.filter((item) => item.title.toLowerCase().includes(q));
-  }, [pdfOutline, filterText]);
+
+    // 搜索模式下：保留自身匹配或子孙匹配的节点，并自动展开所有匹配分支
+    const filterTree = (nodes: OutlineItem[], prefix: string): Array<{ node: OutlineItem; key: string; children?: any[] }> => {
+      const res: Array<{ node: OutlineItem; key: string; children?: any[] }> = [];
+      nodes.forEach((node, idx) => {
+        const key = prefix ? `${prefix}-${idx}` : `${idx}`;
+        const childMatches = node.items && node.items.length > 0 ? filterTree(node.items, key) : [];
+        const selfMatch = !q || node.title.toLowerCase().includes(q);
+        if (selfMatch || childMatches.length > 0) {
+          res.push({
+            node,
+            key,
+            children: childMatches.length > 0 ? childMatches : undefined,
+          });
+        }
+      });
+      return res;
+    };
+
+    const filteredTree = filterTree(pdfOutline, "");
+    const rows: FlatPdfOutlineRow[] = [];
+
+    const flatten = (
+      items: Array<{ node: OutlineItem; key: string; children?: any[] }>,
+      depth: number,
+    ) => {
+      for (const entry of items) {
+        const hasChildren = Boolean(
+          (q ? entry.children : entry.node.items) &&
+            ((q ? entry.children?.length : entry.node.items?.length) ?? 0) > 0,
+        );
+        const isCollapsed = q ? false : collapsedKeys.has(entry.key);
+        rows.push({
+          key: entry.key,
+          title: entry.node.title,
+          pageIndex: entry.node.pageIndex,
+          depth,
+          hasChildren,
+          collapsed: isCollapsed,
+        });
+        if (hasChildren && !isCollapsed && entry.children) {
+          flatten(entry.children, depth + 1);
+        }
+      }
+    };
+
+    flatten(filteredTree, 0);
+    return rows;
+  }, [pdfOutline, filterText, collapsedKeys]);
+
+  // 计算当前阅读页对应的最精确书签行 key
+  const activeOutlineKey = useMemo(() => {
+    let bestKey: string | null = null;
+    let bestPage = -1;
+    for (const row of flatOutlineRows) {
+      if (row.pageIndex !== undefined && row.pageIndex <= currentPage && row.pageIndex >= bestPage) {
+        bestPage = row.pageIndex;
+        bestKey = row.key;
+      }
+    }
+    return bestKey;
+  }, [flatOutlineRows, currentPage]);
+
+  const toggleCollapseKey = (key: string) => {
+    setCollapsedKeys((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  };
+
+  const allCollapsed = allParentKeys.length > 0 && collapsedKeys.size >= allParentKeys.length;
+  const toggleAllCollapse = () => {
+    if (allCollapsed) {
+      setCollapsedKeys(new Set());
+    } else {
+      setCollapsedKeys(new Set(allParentKeys));
+    }
+  };
 
   // 缩略图自动滚动跟随当前高亮页
   useEffect(() => {
@@ -172,9 +276,9 @@ function PdfOutlineSection({
 
       {tab === "outline" ? (
         <>
-          {/* 搜索/过滤输入框 */}
-          <div className="border-b border-line/60 px-2 py-1">
-            <div className="flex items-center gap-1 rounded border border-line/80 bg-input px-1.5 py-0.5 text-[11px]">
+          {/* 搜索/过滤输入框与一键展开/折叠 */}
+          <div className="flex items-center gap-1 border-b border-line/60 px-2 py-1">
+            <div className="flex min-w-0 flex-1 items-center gap-1 rounded border border-line/80 bg-input px-1.5 py-0.5 text-[11px]">
               <Icon name="search" size={11} className="text-faint" />
               <input
                 type="text"
@@ -193,45 +297,77 @@ function PdfOutlineSection({
                 </button>
               ) : null}
             </div>
+            {allParentKeys.length > 0 ? (
+              <button
+                type="button"
+                title={allCollapsed ? "展开全部书签层级" : "折叠全部子书签"}
+                onClick={toggleAllCollapse}
+                className="flex h-6 w-6 shrink-0 items-center justify-center rounded border border-line/70 bg-input text-muted hover:bg-hover hover:text-fg"
+              >
+                <Icon name={allCollapsed ? "chevron-down" : "chevron-up"} size={11} />
+              </button>
+            ) : null}
           </div>
 
-          {/* 大纲书签列表 */}
+          {/* 多级大纲书签树列表 */}
           <div ref={listRef} className="min-h-0 flex-1 overflow-auto p-1 font-sans">
-            {filteredOutline.length === 0 ? (
+            {flatOutlineRows.length === 0 ? (
               <div className="px-3 py-6 text-center text-[12px] text-faint">
                 {filterText ? "没有匹配的书签。" : "当前 PDF 未包含书签大纲。"}
               </div>
             ) : (
               <div className="flex flex-col gap-0.5">
-                {filteredOutline.map((item, idx) => {
-                  const active = item.pageIndex === currentPage;
+                {flatOutlineRows.map((row) => {
+                  const active = row.key === activeOutlineKey;
                   return (
                     <div
-                      key={idx}
+                      key={row.key}
+                      style={{ paddingLeft: `${4 + row.depth * 14}px` }}
                       onClick={() => {
-                        if (item.pageIndex) jumpToPdfPage(doc.id, item.pageIndex);
+                        if (row.pageIndex) jumpToPdfPage(doc.id, row.pageIndex);
                       }}
-                      className={`group flex cursor-pointer items-center justify-between gap-1.5 rounded px-2 py-1.5 text-[12px] transition-colors ${
+                      className={`group flex cursor-pointer items-center justify-between gap-1 rounded py-1 pr-2 text-[12px] transition-colors ${
                         active
                           ? "bg-accent-soft-strong font-medium text-accent"
                           : "text-muted hover:bg-hover hover:text-fg"
                       }`}
                     >
-                      <div className="flex min-w-0 items-center gap-1.5">
+                      <div className="flex min-w-0 items-center gap-1">
+                        {row.hasChildren ? (
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              toggleCollapseKey(row.key);
+                            }}
+                            title={row.collapsed ? "展开子章节" : "折叠子章节"}
+                            className="flex h-4 w-4 shrink-0 items-center justify-center rounded text-faint hover:bg-line/50 hover:text-fg"
+                          >
+                            <Icon
+                              name={row.collapsed ? "chevron-right" : "chevron-down"}
+                              size={11}
+                            />
+                          </button>
+                        ) : (
+                          <span className="inline-block w-4 shrink-0" />
+                        )}
                         <Icon
-                          name="file-text"
+                          name={row.depth === 0 && row.hasChildren ? "book-open" : "file-text"}
                           size={12}
                           className={`shrink-0 ${
                             active ? "text-accent" : "text-faint group-hover:text-muted"
                           }`}
                         />
-                        <span className="truncate" title={item.title}>
-                          {item.title}
+                        <span
+                          className={`truncate ${row.depth === 0 ? "font-medium" : ""}`}
+                          title={row.title}
+                        >
+                          {row.title}
                         </span>
                       </div>
-                      {item.pageIndex ? (
+                      {row.pageIndex ? (
                         <span className="shrink-0 font-mono text-[10.5px] text-faint">
-                          P.{item.pageIndex}
+                          P.{row.pageIndex}
                         </span>
                       ) : null}
                     </div>

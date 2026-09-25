@@ -1,4 +1,4 @@
-export const APP_NAME = "MasterMD";
+export const APP_NAME = "MasterEdit";
 /** 作者信息 */
 export const AUTHOR_NAME = "Master Wang";
 export const AUTHOR_NAME_CN = "王大师";

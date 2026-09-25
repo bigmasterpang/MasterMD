@@ -422,7 +422,7 @@ export async function buildDocxBlob(
   const document = new Document({
     creator: "Master Wang (王大师)",
     title,
-    description: "由 MasterMD 导出 · Master Wang（王大师）",
+    description: "由 MasterEdit 导出 · Master Wang（王大师）",
     numbering: {
       config: [
         {
