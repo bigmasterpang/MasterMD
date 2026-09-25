@@ -330,6 +330,162 @@ fn collect_source_files(root: &Path, max_files: usize) -> Vec<PathBuf> {
     result
 }
 
+/// 计算行首缩进宽度（空格计 1，Tab 计 4）
+fn line_indent_width(line: &str) -> usize {
+    let mut width = 0;
+    for ch in line.chars() {
+        match ch {
+            ' ' => width += 1,
+            '\t' => width += 4,
+            _ => break,
+        }
+    }
+    width
+}
+
+/// 从定义行 `def_idx` 开始，精准提取整个函数/结构体的代码行（仅包含该函数本身，不含前后其它函数）
+fn extract_function_lines(lines: &[&str], def_idx: usize) -> Vec<SnippetLine> {
+    if def_idx >= lines.len() {
+        return Vec::new();
+    }
+    let max_scan_end = (def_idx + 500).min(lines.len());
+    let first_trimmed = lines[def_idx].trim();
+
+    // 1. Python / 缩进型代码块识别（如 `def foo(...):` / `async def foo(...):` / `class Foo:`）
+    let is_indent_lang = first_trimmed.starts_with("def ")
+        || first_trimmed.starts_with("async def ")
+        || (first_trimmed.starts_with("class ") && !first_trimmed.contains('{'));
+
+    let mut end_idx = def_idx;
+
+    if is_indent_lang {
+        let base_indent = line_indent_width(lines[def_idx]);
+        let mut sig_done = first_trimmed.ends_with(':');
+        let mut last_body_line = def_idx;
+
+        for (cur_idx, &line) in lines.iter().enumerate().take(max_scan_end).skip(def_idx + 1) {
+            let t = line.trim();
+            if !sig_done {
+                last_body_line = cur_idx;
+                if t.ends_with(':') {
+                    sig_done = true;
+                }
+                continue;
+            }
+            if t.is_empty() || t.starts_with('#') {
+                continue;
+            }
+            let indent = line_indent_width(line);
+            if indent > base_indent {
+                last_body_line = cur_idx;
+            } else {
+                break;
+            }
+        }
+        end_idx = last_body_line;
+    } else {
+        // 2. 花括号 `{ ... }` 或单行/多行语句型语言（Rust / C / C++ / TS / JS / Go / Java / C# 等）
+        let mut brace_depth: i32 = 0;
+        let mut paren_depth: i32 = 0;
+        let mut found_open_brace = false;
+        let mut in_block_comment = false;
+
+        'line_loop: for (cur_idx, &line) in lines.iter().enumerate().take(max_scan_end).skip(def_idx) {
+            let chars: Vec<char> = line.chars().collect();
+            let mut i = 0;
+            let mut in_string: Option<char> = None;
+
+            while i < chars.len() {
+                let ch = chars[i];
+                let next = chars.get(i + 1).copied();
+
+                if in_block_comment {
+                    if ch == '*' && next == Some('/') {
+                        in_block_comment = false;
+                        i += 2;
+                        continue;
+                    }
+                    i += 1;
+                    continue;
+                }
+
+                if let Some(quote) = in_string {
+                    if ch == '\\' {
+                        i += 2;
+                        continue;
+                    }
+                    if ch == quote {
+                        in_string = None;
+                    }
+                    i += 1;
+                    continue;
+                }
+
+                // 行注释直接跳出当前行剩余字符
+                if ch == '/' && next == Some('/') {
+                    break;
+                }
+                if ch == '/' && next == Some('*') {
+                    in_block_comment = true;
+                    i += 2;
+                    continue;
+                }
+                if ch == '"' || ch == '\'' || ch == '`' {
+                    in_string = Some(ch);
+                    i += 1;
+                    continue;
+                }
+
+                match ch {
+                    '(' => paren_depth += 1,
+                    ')' => paren_depth = (paren_depth - 1).max(0),
+                    '{' => {
+                        brace_depth += 1;
+                        found_open_brace = true;
+                    }
+                    '}' => {
+                        if found_open_brace {
+                            brace_depth -= 1;
+                            if brace_depth <= 0 {
+                                end_idx = cur_idx;
+                                break 'line_loop;
+                            }
+                        }
+                    }
+                    ';' if !found_open_brace && paren_depth == 0 => {
+                        // 无花括号的函数声明/类型定义/常量表达式以分号结束
+                        end_idx = cur_idx;
+                        break 'line_loop;
+                    }
+                    _ => {}
+                }
+                i += 1;
+            }
+
+            end_idx = cur_idx;
+            // 若在签名行后超过 12 行仍未出现 `{` 且括号已闭合，说明是单行无分号定义
+            if !found_open_brace && paren_depth == 0 && cur_idx >= def_idx + 1 {
+                let next_trimmed = lines
+                    .get(cur_idx + 1)
+                    .map(|s| s.trim())
+                    .unwrap_or("");
+                if !next_trimmed.starts_with('{') && !next_trimmed.starts_with("where") {
+                    break;
+                }
+            }
+        }
+    }
+
+    lines[def_idx..=end_idx]
+        .iter()
+        .enumerate()
+        .map(|(offset, &line_str)| SnippetLine {
+            line: def_idx + offset + 1,
+            text: line_str.chars().take(400).collect(),
+        })
+        .collect()
+}
+
 /// 在工作区目录中极速检索符号定义（mode = "defs"）或全部引用（mode = "refs"）
 #[tauri::command]
 pub async fn search_workspace_symbols(
@@ -385,17 +541,11 @@ pub async fn search_workspace_symbols(
                 continue;
             }
 
-            let mut preview_lines = Vec::new();
-            if is_def {
-                let start_line = idx.saturating_sub(3);
-                let end_line = (idx + 14).min(lines.len());
-                for (p_idx, &p_line) in lines[start_line..end_line].iter().enumerate() {
-                    preview_lines.push(SnippetLine {
-                        line: start_line + p_idx + 1,
-                        text: p_line.chars().take(180).collect(),
-                    });
-                }
-            }
+            let preview_lines = if is_def {
+                extract_function_lines(&lines, idx)
+            } else {
+                Vec::new()
+            };
 
             let col = raw_line[..byte_col].chars().count() + 1;
             matches.push(WorkspaceCodeMatch {
@@ -403,7 +553,7 @@ pub async fn search_workspace_symbols(
                 file_name: file_name.clone(),
                 line: idx + 1,
                 col,
-                line_text: trimmed.chars().take(180).collect(),
+                line_text: trimmed.chars().take(240).collect(),
                 kind: def_kind.unwrap_or("reference").to_string(),
                 is_definition: is_def,
                 preview_lines,

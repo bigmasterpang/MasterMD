@@ -1,4 +1,5 @@
 import { Icon } from "../common/Icon";
+import { useAppStore } from "../../stores/appStore";
 import {
   jumpToCodeLocation,
   openSymbolReferences,
@@ -22,6 +23,7 @@ const KIND_BADGE: Record<string, { label: string; cls: string }> = {
  * 代码速览定义 (Peek Definition) 与查找所有引用 (Find All References) 浮层面板
  */
 export function CodePeekPanel({ docId }: Props) {
+  const doc = useAppStore((s) => s.docs.find((d) => d.id === docId) ?? null);
   const peekState = useCodeNavStore((s) => s.peekState);
   const closePeek = useCodeNavStore((s) => s.closePeek);
   const setPeekSelectedIndex = useCodeNavStore((s) => s.setPeekSelectedIndex);
@@ -30,11 +32,24 @@ export function CodePeekPanel({ docId }: Props) {
     return null;
   }
 
+  const isRightPane = (doc?.pane ?? 0) === 1;
+  const splitBtnLabel = isRightPane ? "在左栏打开" : "在右栏打开";
   const { mode, symbol, locations, selectedIndex, loading } = peekState;
   const activeLoc = locations[selectedIndex] ?? locations[0] ?? null;
+  const displayLines =
+    activeLoc && activeLoc.previewLines.length > 0
+      ? activeLoc.previewLines
+      : activeLoc
+        ? [{ line: activeLoc.line, text: activeLoc.lineText }]
+        : [];
+  const firstLine = displayLines[0]?.line ?? activeLoc?.line ?? 1;
+  const lastLine = displayLines[displayLines.length - 1]?.line ?? firstLine;
 
   return (
-    <div className="print-hide absolute inset-x-4 bottom-3 z-30 flex max-h-[52%] flex-col overflow-hidden rounded-xl border border-accent/40 bg-elevated shadow-xl">
+    <div
+      onWheel={(e) => e.stopPropagation()}
+      className="print-hide absolute inset-x-4 bottom-3 z-30 flex flex-col overflow-hidden rounded-xl border border-accent/40 bg-elevated shadow-xl"
+    >
       {/* 顶部标题栏 */}
       <div className="flex h-8 shrink-0 items-center justify-between gap-2 border-b border-line bg-panel px-3 text-[12px]">
         <div className="flex min-w-0 items-center gap-2">
@@ -44,7 +59,7 @@ export function CodePeekPanel({ docId }: Props) {
             className="shrink-0 text-accent"
           />
           <span className="font-semibold text-fg">
-            {mode === "peek-def" ? "速览函数/符号定义" : "查找所有引用"}:
+            {mode === "peek-def" ? "速览函数实现" : "查找所有引用"}:
           </span>
           <code className="rounded bg-accent-soft px-1.5 py-0.5 font-mono text-[11.5px] font-semibold text-accent">
             {symbol}
@@ -69,7 +84,7 @@ export function CodePeekPanel({ docId }: Props) {
                   })
                 }
                 className="flex items-center gap-1 rounded bg-accent px-2 py-0.5 text-[11px] font-medium text-accent-fg hover:opacity-90"
-                title="直接跳转到该处源码"
+                title="在当前分栏直接跳转到该处源码"
               >
                 <span>跳转到定义</span>
               </button>
@@ -83,10 +98,10 @@ export function CodePeekPanel({ docId }: Props) {
                   })
                 }
                 className="flex items-center gap-1 rounded border border-line bg-elevated px-2 py-0.5 text-[11px] text-fg hover:bg-hover"
-                title="在另一侧分栏并排打开该文件并定位"
+                title={`保持当前栏不动，${splitBtnLabel}并定位到此函数`}
               >
                 <Icon name="columns" size={11} />
-                <span>分栏打开</span>
+                <span>{splitBtnLabel}</span>
               </button>
               {mode === "peek-def" ? (
                 <button
@@ -122,10 +137,10 @@ export function CodePeekPanel({ docId }: Props) {
           未在当前文件或工程目录中找到「{symbol}」的定义或引用。
         </div>
       ) : mode === "peek-def" && activeLoc ? (
-        <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+        <div className="flex flex-col overflow-hidden">
           {/* 若存在多个同名定义，提供顶部切换标签 */}
           {locations.length > 1 ? (
-            <div className="flex items-center gap-1 overflow-x-auto border-b border-line/60 bg-sidebar px-2.5 py-1">
+            <div className="flex shrink-0 items-center gap-1 overflow-x-auto border-b border-line/60 bg-sidebar px-2.5 py-1">
               {locations.map((loc, idx) => (
                 <button
                   key={`${loc.path ?? loc.docId}-${loc.line}`}
@@ -144,7 +159,7 @@ export function CodePeekPanel({ docId }: Props) {
               ))}
             </div>
           ) : (
-            <div className="flex items-center justify-between border-b border-line/60 bg-sidebar/60 px-3 py-1 text-[11px] text-muted">
+            <div className="flex shrink-0 items-center justify-between border-b border-line/60 bg-sidebar/60 px-3 py-1 text-[11px] text-muted">
               <div className="flex items-center gap-2 truncate">
                 <span
                   className={`rounded px-1.5 py-0.2 text-[10px] font-medium ${
@@ -156,46 +171,47 @@ export function CodePeekPanel({ docId }: Props) {
                 <span className="truncate font-mono text-fg/90">
                   {activeLoc.path || activeLoc.fileName}
                 </span>
-                <span className="font-mono text-faint">第 {activeLoc.line} 行</span>
+                <span className="font-mono text-faint">
+                  第 {firstLine}–{lastLine} 行（共 {displayLines.length} 行）
+                </span>
               </div>
-              <span className="text-[10.5px] text-faint">双击任意代码行可直接跳转</span>
+              <span className="text-[10.5px] text-faint">可滚动查看完整函数 · 双击行可直接跳转</span>
             </div>
           )}
 
-          {/* 原函数代码片段预览 */}
-          <div className="min-h-0 flex-1 overflow-auto bg-app p-2 font-mono text-[12px] leading-relaxed">
-            {(activeLoc.previewLines.length > 0
-              ? activeLoc.previewLines
-              : [{ line: activeLoc.line, text: activeLoc.lineText }]
-            ).map((sl) => {
-              const isDefLine = sl.line === activeLoc.line;
-              return (
-                <div
-                  key={sl.line}
-                  onDoubleClick={() =>
-                    void jumpToCodeLocation(
-                      { ...activeLoc, line: sl.line },
-                      { openInSplit: false, fromDocId: docId, symbol },
-                    )
-                  }
-                  className={`flex cursor-pointer items-baseline rounded px-2 py-0.5 ${
-                    isDefLine
-                      ? "bg-accent-soft/80 font-semibold text-fg border-l-2 border-accent"
-                      : "text-fg/85 hover:bg-hover/60"
-                  }`}
-                >
-                  <span className="w-10 shrink-0 select-none pr-3 text-right text-[11px] text-faint">
-                    {sl.line}
-                  </span>
-                  <span className="whitespace-pre overflow-x-auto">{sl.text || " "}</span>
-                </div>
-              );
-            })}
+          {/* 原函数完整代码滚动预览区（仅显示当前函数，带垂直与水平滚动条） */}
+          <div className="peek-code-scroll max-h-[280px] overflow-x-auto overflow-y-auto overscroll-contain bg-app font-mono text-[12px] leading-relaxed">
+            <div className="inline-block min-w-full py-1.5">
+              {displayLines.map((sl) => {
+                const isDefLine = sl.line === activeLoc.line;
+                return (
+                  <div
+                    key={sl.line}
+                    onDoubleClick={() =>
+                      void jumpToCodeLocation(
+                        { ...activeLoc, line: sl.line },
+                        { openInSplit: false, fromDocId: docId, symbol },
+                      )
+                    }
+                    className={`flex cursor-pointer items-baseline px-2 py-0.5 ${
+                      isDefLine
+                        ? "border-l-2 border-accent bg-accent-soft/80 font-semibold text-fg"
+                        : "text-fg/85 hover:bg-hover/60"
+                    }`}
+                  >
+                    <span className="w-11 shrink-0 select-none pr-3 text-right text-[11px] text-faint">
+                      {sl.line}
+                    </span>
+                    <span className="whitespace-pre pr-4">{sl.text || " "}</span>
+                  </div>
+                );
+              })}
+            </div>
           </div>
         </div>
       ) : (
         /* 引用列表视图 */
-        <div className="min-h-0 flex-1 divide-y divide-line/50 overflow-y-auto bg-app">
+        <div className="peek-code-scroll max-h-[280px] divide-y divide-line/50 overflow-y-auto overscroll-contain bg-app">
           {locations.map((loc, idx) => {
             const badge = loc.isDefinition
               ? KIND_BADGE[loc.kind] ?? KIND_BADGE.function
@@ -239,10 +255,10 @@ export function CodePeekPanel({ docId }: Props) {
                       symbol,
                     });
                   }}
-                  title="在右侧分栏打开此位置"
+                  title={`保持当前栏不动，${splitBtnLabel}此位置`}
                   className="shrink-0 rounded border border-line bg-elevated px-1.5 py-0.5 text-[10.5px] text-muted opacity-0 hover:text-fg group-hover:opacity-100"
                 >
-                  分栏打开
+                  {splitBtnLabel}
                 </button>
               </div>
             );

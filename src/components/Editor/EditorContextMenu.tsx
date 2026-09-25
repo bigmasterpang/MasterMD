@@ -182,6 +182,10 @@ export function EditorContextMenu({
 
       if (symbol) {
         const displaySym = symbol.length > 22 ? `${symbol.slice(0, 22)}…` : symbol;
+        const isRightPane = (doc?.pane ?? 0) === 1;
+        const splitLabel = isRightPane
+          ? `在左侧分栏打开定义「${displaySym}」`
+          : `在右侧分栏打开定义「${displaySym}」`;
         codeGroups.push([
           {
             label: `转到原函数 / 定义「${displaySym}」`,
@@ -196,7 +200,7 @@ export function EditorContextMenu({
             onClick: () => void peekSymbolDefinition(docId, symbol),
           },
           {
-            label: `在右侧分栏打开定义「${displaySym}」`,
+            label: splitLabel,
             hint: "Ctrl+Alt+单击",
             icon: "columns",
             onClick: () => void goToSymbolDefinition(docId, symbol, { openInSplit: true }),
@@ -260,7 +264,7 @@ export function EditorContextMenu({
         { label: "提示块", submenu: calloutSubmenu },
       ],
     ];
-  }, [hasSelection, isMd, symbol, docId, backCount, forwardCount]);
+  }, [hasSelection, isMd, symbol, docId, doc?.pane, backCount, forwardCount]);
 
   return <ContextMenu x={x} y={y} groups={groups} onClose={onClose} />;
 }

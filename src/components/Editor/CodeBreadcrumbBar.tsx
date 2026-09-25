@@ -3,7 +3,7 @@ import { Icon } from "../common/Icon";
 import { useAppStore } from "../../stores/appStore";
 import { useSettingsStore } from "../../stores/settingsStore";
 import { analyzeSymbols, type NavItem } from "../../utils/outline";
-import { fileName } from "../../utils/filePath";
+import { fileName, isMarkdownDoc } from "../../utils/filePath";
 import {
   goToSymbolDefinition,
   navigateHistoryBack,
@@ -72,7 +72,7 @@ export function CodeBreadcrumbBar({ docId }: Props) {
     return { currentContainer: container, currentSymbol: active };
   }, [symbols, cursorLine]);
 
-  if (!doc) return null;
+  if (!doc || isMarkdownDoc(doc)) return null;
 
   const docFontSize = doc.fontSize ?? defaultFontSize;
   const zoomPercent = Math.round((docFontSize / defaultFontSize) * 100);

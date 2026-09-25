@@ -14,7 +14,7 @@ import {
   ViewPlugin,
   type ViewUpdate,
 } from "@codemirror/view";
-import { useAppStore, getDocById } from "../stores/appStore";
+import { useAppStore, getDocById, createDoc, nextDocId } from "../stores/appStore";
 import { useExplorerStore } from "../stores/explorerStore";
 import { showMessage } from "../stores/dialogStore";
 import { getEditorView } from "./editorBridge";
@@ -330,6 +330,146 @@ function classifyDefinitionLine(
   return null;
 }
 
+function lineIndentWidth(line: string): number {
+  let width = 0;
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i];
+    if (ch === " ") width += 1;
+    else if (ch === "\t") width += 4;
+    else break;
+  }
+  return width;
+}
+
+/**
+ * 从定义行 `defIdx` 开始，精准提取整个函数/结构体的代码行
+ * （只显示当前函数本身，不包含函数上方或下方的其它代码）
+ */
+export function extractFunctionLines(lines: string[], defIdx: number): SnippetLine[] {
+  if (defIdx < 0 || defIdx >= lines.length) return [];
+  const maxScanEnd = Math.min(lines.length, defIdx + 500);
+  const firstTrimmed = lines[defIdx].trim();
+
+  // 1. Python / 缩进型代码块识别（如 `def foo(...):` / `async def foo(...):` / `class Foo:`）
+  const isIndentLang =
+    firstTrimmed.startsWith("def ") ||
+    firstTrimmed.startsWith("async def ") ||
+    (firstTrimmed.startsWith("class ") && !firstTrimmed.includes("{"));
+
+  let endIdx = defIdx;
+
+  if (isIndentLang) {
+    const baseIndent = lineIndentWidth(lines[defIdx]);
+    let sigDone = firstTrimmed.endsWith(":");
+    let lastBodyLine = defIdx;
+
+    for (let curIdx = defIdx + 1; curIdx < maxScanEnd; curIdx++) {
+      const line = lines[curIdx];
+      const t = line.trim();
+      if (!sigDone) {
+        lastBodyLine = curIdx;
+        if (t.endsWith(":")) {
+          sigDone = true;
+        }
+        continue;
+      }
+      if (!t || t.startsWith("#")) continue;
+      const indent = lineIndentWidth(line);
+      if (indent > baseIndent) {
+        lastBodyLine = curIdx;
+      } else {
+        break;
+      }
+    }
+    endIdx = lastBodyLine;
+  } else {
+    // 2. 花括号 `{ ... }` 或语句型语言（Rust / C / C++ / TS / JS / Go / Java / C# 等）
+    let braceDepth = 0;
+    let parenDepth = 0;
+    let foundOpenBrace = false;
+    let inBlockComment = false;
+
+    outer: for (let curIdx = defIdx; curIdx < maxScanEnd; curIdx++) {
+      const line = lines[curIdx];
+      let inString: string | null = null;
+
+      for (let i = 0; i < line.length; i++) {
+        const ch = line[i];
+        const next = line[i + 1];
+
+        if (inBlockComment) {
+          if (ch === "*" && next === "/") {
+            inBlockComment = false;
+            i += 1;
+          }
+          continue;
+        }
+
+        if (inString) {
+          if (ch === "\\") {
+            i += 1;
+            continue;
+          }
+          if (ch === inString) {
+            inString = null;
+          }
+          continue;
+        }
+
+        if (ch === "/" && next === "/") {
+          break;
+        }
+        if (ch === "/" && next === "*") {
+          inBlockComment = true;
+          i += 1;
+          continue;
+        }
+        if (ch === '"' || ch === "'" || ch === "`") {
+          inString = ch;
+          continue;
+        }
+
+        if (ch === "(") {
+          parenDepth += 1;
+        } else if (ch === ")") {
+          parenDepth = Math.max(0, parenDepth - 1);
+        } else if (ch === "{") {
+          braceDepth += 1;
+          foundOpenBrace = true;
+        } else if (ch === "}") {
+          if (foundOpenBrace) {
+            braceDepth -= 1;
+            if (braceDepth <= 0) {
+              endIdx = curIdx;
+              break outer;
+            }
+          }
+        } else if (ch === ";" && !foundOpenBrace && parenDepth === 0) {
+          endIdx = curIdx;
+          break outer;
+        }
+      }
+
+      endIdx = curIdx;
+      if (!foundOpenBrace && parenDepth === 0 && curIdx >= defIdx + 1) {
+        const nextTrimmed = (lines[curIdx + 1] ?? "").trim();
+        if (!nextTrimmed.startsWith("{") && !nextTrimmed.startsWith("where")) {
+          break;
+        }
+      }
+    }
+  }
+
+  const result: SnippetLine[] = [];
+  for (let p = defIdx; p <= endIdx; p++) {
+    result.push({
+      line: p + 1,
+      text: lines[p].slice(0, 400),
+    });
+  }
+  return result;
+}
+
 /** 扫描单个内存文档中的定义或全部引用 */
 export function scanDocumentForSymbol(
   docId: string,
@@ -356,17 +496,7 @@ export function scanDocumentForSymbol(
 
     if (onlyDefs && !isDef) continue;
 
-    const previewLines: SnippetLine[] = [];
-    if (isDef) {
-      const startLine = Math.max(0, i - 3);
-      const endLine = Math.min(lines.length, i + 14);
-      for (let p = startLine; p < endLine; p++) {
-        previewLines.push({
-          line: p + 1,
-          text: lines[p].slice(0, 180),
-        });
-      }
-    }
+    const previewLines: SnippetLine[] = isDef ? extractFunctionLines(lines, i) : [];
 
     results.push({
       docId,
@@ -374,7 +504,7 @@ export function scanDocumentForSymbol(
       fileName: name,
       line: i + 1,
       col: colIdx + 1,
-      lineText: trimmed.slice(0, 180),
+      lineText: trimmed.slice(0, 240),
       kind: defKind ?? "reference",
       isDefinition: isDef,
       previewLines,
@@ -500,10 +630,10 @@ export function scrollEditorToLineAndFlash(
   col1Based = 1,
 ): void {
   const attempt = (retriesLeft: number) => {
-    const view = getEditorView(docId) ?? getEditorView();
+    const view = docId ? getEditorView(docId) : getEditorView();
     if (!view) {
       if (retriesLeft > 0) {
-        window.setTimeout(() => attempt(retriesLeft - 1), 60);
+        window.setTimeout(() => attempt(retriesLeft - 1), 50);
       }
       return;
     }
@@ -514,6 +644,7 @@ export function scrollEditorToLineAndFlash(
       lineInfo.from + Math.max(0, col1Based - 1),
     );
 
+    view.requestMeasure();
     view.dispatch({
       selection: EditorSelection.cursor(targetPos),
       effects: [
@@ -522,6 +653,17 @@ export function scrollEditorToLineAndFlash(
       ],
     });
     view.focus();
+
+    requestAnimationFrame(() => {
+      try {
+        view.requestMeasure();
+        view.dispatch({
+          effects: EditorView.scrollIntoView(targetPos, { y: "center" }),
+        });
+      } catch {
+        /* ignore destroyed view */
+      }
+    });
 
     window.setTimeout(() => {
       try {
@@ -532,7 +674,7 @@ export function scrollEditorToLineAndFlash(
     }, 1500);
   };
 
-  attempt(6);
+  attempt(12);
 }
 
 /* ------------------------------------------------------------------ */
@@ -552,7 +694,7 @@ function recordCurrentPosition(docId: string, symbol?: string): void {
   });
 }
 
-/** 跳转到指定的符号位置（支持当前栏跳转或右侧分栏并排打开） */
+/** 跳转到指定的符号位置（支持当前栏跳转或在另一侧分栏并排打开查看） */
 export async function jumpToCodeLocation(
   loc: CodeSymbolLocation,
   options?: { openInSplit?: boolean; fromDocId?: string; symbol?: string },
@@ -573,12 +715,128 @@ export async function jumpToCodeLocation(
       : 0
     : sourcePane;
 
-  if (options?.openInSplit && !appState.layout.split) {
-    appState.setLayout({ split: true });
+  // ==================== 分栏并排打开模式 (openInSplit = true) ====================
+  // 核心保证：绝不把当前正在阅读的 sourceDoc 从 sourcePane 移走！
+  // 原分栏继续保留调用处，另一侧分栏 (targetPane) 打开并定位到目标函数。
+  if (options?.openInSplit) {
+    // 1. 先检查目标分栏 (targetPane) 中是否已经打开了该文件
+    const existingInTargetPane = appState.docs.find(
+      (d) =>
+        (d.pane ?? 0) === targetPane &&
+        d.id !== fromDocId &&
+        ((loc.docId && d.id === loc.docId) ||
+          (loc.path && d.filePath && normalizePath(d.filePath) === normalizePath(loc.path)) ||
+          (!loc.path && !d.filePath && sourceDoc && d.content === sourceDoc.content)),
+    );
+
+    if (existingInTargetPane) {
+      const nextActiveIds: [string | null, string | null] = [...appState.activeIds];
+      if (sourceDoc) nextActiveIds[sourcePane] = sourceDoc.id;
+      nextActiveIds[targetPane] = existingInTargetPane.id;
+      useAppStore.setState((s) => ({
+        activeIds: nextActiveIds,
+        activeId: existingInTargetPane.id,
+        layout: { ...s.layout, split: true, activePane: targetPane },
+      }));
+      window.setTimeout(() => {
+        scrollEditorToLineAndFlash(existingInTargetPane.id, loc.line, loc.col);
+      }, 30);
+      return;
+    }
+
+    // 2. 检查当前分栏 (sourcePane) 中是否有匹配的已打开文档
+    const existingInSourcePane =
+      (loc.docId ? getDocById(loc.docId) : null) ??
+      (loc.path
+        ? appState.docs.find(
+            (d) => d.filePath && normalizePath(d.filePath) === normalizePath(loc.path!),
+          ) ?? null
+        : null);
+
+    if (existingInSourcePane) {
+      // 若目标函数就在当前正在阅读的文档 (sourceDoc) 中，或源栏只有这一个标签：
+      // 在另一侧分栏 (targetPane) 创建一个镜像分栏标签页，实现左/右栏同时对照查看同一文件的调用处与函数定义！
+      const sourcePaneCount = appState.docs.filter(
+        (d) => (d.pane ?? 0) === sourcePane,
+      ).length;
+      if (existingInSourcePane.id === sourceDoc?.id || sourcePaneCount <= 1) {
+        const companionDoc = createDoc({
+          ...existingInSourcePane,
+          id: nextDocId(),
+          pane: targetPane,
+          cursorLine: loc.line,
+          cursorCol: loc.col,
+          scrollTop: 0,
+        });
+        const nextActiveIds: [string | null, string | null] = [...appState.activeIds];
+        nextActiveIds[sourcePane] = existingInSourcePane.id;
+        nextActiveIds[targetPane] = companionDoc.id;
+        useAppStore.setState((s) => ({
+          docs: [...s.docs, companionDoc],
+          activeIds: nextActiveIds,
+          activeId: companionDoc.id,
+          layout: { ...s.layout, split: true, activePane: targetPane },
+        }));
+        window.setTimeout(() => {
+          scrollEditorToLineAndFlash(companionDoc.id, loc.line, loc.col);
+        }, 50);
+        return;
+      }
+
+      // 若目标函数在源分栏的另一个非活动标签中，将该标签移到另一侧分栏并保持 sourceDoc 在原分栏激活
+      const nextActiveIds: [string | null, string | null] = [...appState.activeIds];
+      if (sourceDoc) nextActiveIds[sourcePane] = sourceDoc.id;
+      nextActiveIds[targetPane] = existingInSourcePane.id;
+      useAppStore.setState((s) => ({
+        docs: s.docs.map((d) =>
+          d.id === existingInSourcePane.id ? { ...d, pane: targetPane } : d,
+        ),
+        activeIds: nextActiveIds,
+        activeId: existingInSourcePane.id,
+        layout: { ...s.layout, split: true, activePane: targetPane },
+      }));
+      window.setTimeout(() => {
+        scrollEditorToLineAndFlash(existingInSourcePane.id, loc.line, loc.col);
+      }, 40);
+      return;
+    }
+
+    // 3. 目标是磁盘上的其它未打开工程文件：开启双栏并在 targetPane 打开该文件
+    if (loc.path) {
+      const nextActiveIds: [string | null, string | null] = [...appState.activeIds];
+      if (sourceDoc) nextActiveIds[sourcePane] = sourceDoc.id;
+      useAppStore.setState((s) => ({
+        activeIds: nextActiveIds,
+        layout: { ...s.layout, split: true, activePane: targetPane },
+      }));
+      await openPath(loc.path, targetPane);
+      const newlyOpened = useAppStore
+        .getState()
+        .docs.find(
+          (d) =>
+            (d.pane ?? 0) === targetPane &&
+            d.filePath &&
+            normalizePath(d.filePath) === normalizePath(loc.path!),
+        );
+      if (newlyOpened) {
+        window.setTimeout(() => {
+          scrollEditorToLineAndFlash(newlyOpened.id, loc.line, loc.col);
+        }, 80);
+      }
+    }
+    return;
   }
 
-  // 1. 目标文件已经在标签页打开
-  const existingDoc =
+  // ==================== 当前栏普通跳转模式 (openInSplit = false) ====================
+  // 优先匹配当前分栏中的同文件标签，避免跨分栏挪动标签
+  const existingInSamePane = appState.docs.find(
+    (d) =>
+      (d.pane ?? 0) === sourcePane &&
+      ((loc.docId && d.id === loc.docId) ||
+        (loc.path && d.filePath && normalizePath(d.filePath) === normalizePath(loc.path))),
+  );
+  const existingAnywhere =
+    existingInSamePane ??
     (loc.docId ? getDocById(loc.docId) : null) ??
     (loc.path
       ? appState.docs.find(
@@ -586,17 +844,18 @@ export async function jumpToCodeLocation(
         ) ?? null
       : null);
 
-  if (existingDoc) {
-    appState.activateDoc(existingDoc.id, targetPane);
+  if (existingAnywhere) {
+    const stayPane = (existingAnywhere.pane ?? sourcePane) as 0 | 1;
+    appState.activateDoc(existingAnywhere.id, stayPane);
     window.setTimeout(() => {
-      scrollEditorToLineAndFlash(existingDoc.id, loc.line, loc.col);
+      scrollEditorToLineAndFlash(existingAnywhere.id, loc.line, loc.col);
     }, 30);
     return;
   }
 
-  // 2. 目标是磁盘上的其它工程文件：打开文件后再定位行号
+  // 目标是磁盘上的其它工程文件：在当前分栏打开文件后再定位行号
   if (loc.path) {
-    await openPath(loc.path, targetPane);
+    await openPath(loc.path, sourcePane);
     const newlyOpened = useAppStore
       .getState()
       .docs.find(

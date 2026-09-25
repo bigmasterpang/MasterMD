@@ -490,22 +490,32 @@ export const useAppStore = create<AppStore>((set, get) => ({
     })),
 
   setContent: (content) =>
-    set((s) => ({
-      docs: s.docs.map((d) =>
-        d.id === s.activeId
-          ? { ...d, content, isDirty: content !== d.savedContent }
-          : d,
-      ),
-    })),
+    set((s) => {
+      const target = s.docs.find((d) => d.id === s.activeId);
+      const targetPath = target?.filePath ? target.filePath.replace(/[\\/]+/g, "\\").toLowerCase() : null;
+      return {
+        docs: s.docs.map((d) =>
+          d.id === s.activeId ||
+          (targetPath && d.filePath && d.filePath.replace(/[\\/]+/g, "\\").toLowerCase() === targetPath)
+            ? { ...d, content, isDirty: content !== d.savedContent }
+            : d,
+        ),
+      };
+    }),
 
   setDocContent: (id, content) =>
-    set((s) => ({
-      docs: s.docs.map((d) =>
-        d.id === id
-          ? { ...d, content, isDirty: content !== d.savedContent }
-          : d,
-      ),
-    })),
+    set((s) => {
+      const target = s.docs.find((d) => d.id === id);
+      const targetPath = target?.filePath ? target.filePath.replace(/[\\/]+/g, "\\").toLowerCase() : null;
+      return {
+        docs: s.docs.map((d) =>
+          d.id === id ||
+          (targetPath && d.filePath && d.filePath.replace(/[\\/]+/g, "\\").toLowerCase() === targetPath)
+            ? { ...d, content, isDirty: content !== d.savedContent }
+            : d,
+        ),
+      };
+    }),
 
   setCursor: (line, col) =>
     set((s) => ({
@@ -551,37 +561,46 @@ export const useAppStore = create<AppStore>((set, get) => ({
     })),
 
   markSaved: (path, modifiedAt, size) =>
-    set((s) => ({
-      docs: s.docs.map((d) =>
-        d.id === s.activeId
-          ? {
-              ...d,
-              filePath: path,
-              savedContent: d.content,
-              isDirty: false,
-              modifiedAt,
-              size,
-            }
-          : d,
-      ),
-    })),
+    set((s) => {
+      const normPath = path.replace(/[\\/]+/g, "\\").toLowerCase();
+      return {
+        docs: s.docs.map((d) =>
+          d.id === s.activeId ||
+          (d.filePath && d.filePath.replace(/[\\/]+/g, "\\").toLowerCase() === normPath)
+            ? {
+                ...d,
+                filePath: path,
+                savedContent: d.content,
+                isDirty: false,
+                modifiedAt,
+                size,
+              }
+            : d,
+        ),
+      };
+    }),
 
   applyDiskReload: (content, modifiedAt, size) =>
-    set((s) => ({
-      docs: s.docs.map((d) =>
-        d.id === s.activeId
-          ? {
-              ...d,
-              content,
-              savedContent: content,
-              isDirty: false,
-              modifiedAt,
-              size,
-              readOnly: size > LARGE_FILE_BYTES,
-            }
-          : d,
-      ),
-    })),
+    set((s) => {
+      const target = s.docs.find((d) => d.id === s.activeId);
+      const targetPath = target?.filePath ? target.filePath.replace(/[\\/]+/g, "\\").toLowerCase() : null;
+      return {
+        docs: s.docs.map((d) =>
+          d.id === s.activeId ||
+          (targetPath && d.filePath && d.filePath.replace(/[\\/]+/g, "\\").toLowerCase() === targetPath)
+            ? {
+                ...d,
+                content,
+                savedContent: content,
+                isDirty: false,
+                modifiedAt,
+                size,
+                readOnly: size > LARGE_FILE_BYTES,
+              }
+            : d,
+        ),
+      };
+    }),
 }));
 
 /** 当前活动文档（无文档时为 null） */
