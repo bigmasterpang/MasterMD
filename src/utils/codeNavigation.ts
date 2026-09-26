@@ -64,43 +64,76 @@ export interface PeekState {
   loading: boolean;
 }
 
-interface CodeNavStore {
+export interface PaneNavHistory {
   backStack: NavHistoryEntry[];
   forwardStack: NavHistoryEntry[];
+}
+
+interface CodeNavStore {
+  /** 按左栏(0) / 右栏(1) 独立维护的后退与前进历史栈，杜绝双栏互串 */
+  historyByPane: Record<0 | 1, PaneNavHistory>;
   /** 当前编辑器光标下的标识符名称 */
   activeSymbol: string | null;
   /** 速览定义 / 引用列表浮层状态 */
   peekState: PeekState | null;
 
   setActiveSymbol: (symbol: string | null) => void;
-  pushHistory: (entry: NavHistoryEntry) => void;
+  pushHistory: (pane: 0 | 1, entry: NavHistoryEntry) => void;
+  clearPaneHistory: (pane: 0 | 1) => void;
   setPeekState: (state: PeekState | null) => void;
   setPeekSelectedIndex: (index: number) => void;
   closePeek: () => void;
 }
 
+export function isSameHistoryLocation(a: NavHistoryEntry, b: NavHistoryEntry): boolean {
+  const sameFile =
+    a.filePath && b.filePath
+      ? normalizePath(a.filePath) === normalizePath(b.filePath)
+      : a.docId === b.docId;
+  return Boolean(sameFile && Math.abs(a.line - b.line) <= 1);
+}
+
+function pushUniqueEntry(stack: NavHistoryEntry[], entry: NavHistoryEntry): NavHistoryEntry[] {
+  const last = stack[stack.length - 1];
+  if (last && isSameHistoryLocation(last, entry)) {
+    // 更新最新列号与 docId
+    return [...stack.slice(0, -1), entry];
+  }
+  return [...stack.slice(-49), entry];
+}
+
 export const useCodeNavStore = create<CodeNavStore>((set) => ({
-  backStack: [],
-  forwardStack: [],
+  historyByPane: {
+    0: { backStack: [], forwardStack: [] },
+    1: { backStack: [], forwardStack: [] },
+  },
   activeSymbol: null,
   peekState: null,
 
   setActiveSymbol: (symbol) => set({ activeSymbol: symbol }),
 
-  pushHistory: (entry) =>
+  pushHistory: (pane, entry) =>
     set((s) => {
-      const last = s.backStack[s.backStack.length - 1];
-      if (
-        last &&
-        last.docId === entry.docId &&
-        last.filePath === entry.filePath &&
-        Math.abs(last.line - entry.line) <= 1
-      ) {
-        return s;
-      }
-      const nextBack = [...s.backStack.slice(-49), entry];
-      return { backStack: nextBack, forwardStack: [] };
+      const current = s.historyByPane[pane] ?? { backStack: [], forwardStack: [] };
+      const nextBack = pushUniqueEntry(current.backStack, entry);
+      return {
+        historyByPane: {
+          ...s.historyByPane,
+          [pane]: {
+            backStack: nextBack,
+            forwardStack: [],
+          },
+        },
+      };
     }),
+
+  clearPaneHistory: (pane) =>
+    set((s) => ({
+      historyByPane: {
+        ...s.historyByPane,
+        [pane]: { backStack: [], forwardStack: [] },
+      },
+    })),
 
   setPeekState: (peekState) => set({ peekState }),
 
@@ -629,11 +662,16 @@ export function scrollEditorToLineAndFlash(
   line1Based: number,
   col1Based = 1,
 ): void {
+  const safeInitLine = Math.max(1, line1Based);
+  const safeInitCol = Math.max(1, col1Based);
+  // 立即同步 store 中的光标行/列，避免异步挂载期间读取到旧行号
+  useAppStore.getState().setDocCursor(docId, safeInitLine, safeInitCol);
+
   const attempt = (retriesLeft: number) => {
     const view = docId ? getEditorView(docId) : getEditorView();
     if (!view) {
       if (retriesLeft > 0) {
-        window.setTimeout(() => attempt(retriesLeft - 1), 50);
+        window.setTimeout(() => attempt(retriesLeft - 1), 40);
       }
       return;
     }
@@ -643,6 +681,9 @@ export function scrollEditorToLineAndFlash(
       lineInfo.to,
       lineInfo.from + Math.max(0, col1Based - 1),
     );
+    const actualCol = targetPos - lineInfo.from + 1;
+
+    useAppStore.getState().setDocCursor(docId, safeLine, actualCol);
 
     view.requestMeasure();
     view.dispatch({
@@ -681,17 +722,54 @@ export function scrollEditorToLineAndFlash(
 /* 核心交互动作：转到定义 / 速览定义 / 查找引用 / 历史前进后退          */
 /* ------------------------------------------------------------------ */
 
-function recordCurrentPosition(docId: string, symbol?: string): void {
+/** 实时获取指定文档的精确光标位置（优先从挂载的 EditorView 读取实时光标） */
+export function getAccurateDocPosition(
+  docId: string,
+  symbol?: string,
+): NavHistoryEntry | null {
   const doc = getDocById(docId);
-  if (!doc) return;
-  useCodeNavStore.getState().pushHistory({
+  if (!doc) return null;
+
+  let line = doc.cursorLine || 1;
+  let col = doc.cursorCol || 1;
+
+  const view = getEditorView(docId);
+  if (view) {
+    try {
+      const head = view.state.selection.main.head;
+      const lineObj = view.state.doc.lineAt(head);
+      line = lineObj.number;
+      col = head - lineObj.from + 1;
+    } catch {
+      /* fallback to store cursor */
+    }
+  }
+
+  return {
     docId: doc.id,
     filePath: doc.filePath,
     fileName: doc.filePath ? fileName(doc.filePath) : "未命名文档",
-    line: doc.cursorLine || 1,
-    col: doc.cursorCol || 1,
+    line,
+    col,
     symbol,
-  });
+  };
+}
+
+/** 在当前文档内跳转到指定行并记录分栏历史（供面包屑符号下拉跳转等调用） */
+export function jumpToLineInDoc(
+  docId: string,
+  line1Based: number,
+  col1Based = 1,
+  symbol?: string,
+): void {
+  const doc = getDocById(docId);
+  if (!doc) return;
+  const pane = (doc.pane ?? 0) as 0 | 1;
+  const currentPos = getAccurateDocPosition(docId, symbol);
+  if (currentPos && Math.abs(currentPos.line - line1Based) > 1) {
+    useCodeNavStore.getState().pushHistory(pane, currentPos);
+  }
+  scrollEditorToLineAndFlash(docId, line1Based, col1Based);
 }
 
 /** 跳转到指定的符号位置（支持当前栏跳转或在另一侧分栏并排打开查看） */
@@ -701,12 +779,6 @@ export async function jumpToCodeLocation(
 ): Promise<void> {
   const appState = useAppStore.getState();
   const fromDocId = options?.fromDocId ?? appState.activeId;
-  if (fromDocId) {
-    recordCurrentPosition(fromDocId, options?.symbol);
-  }
-
-  useCodeNavStore.getState().closePeek();
-
   const sourceDoc = fromDocId ? getDocById(fromDocId) : null;
   const sourcePane = (sourceDoc?.pane ?? appState.layout.activePane ?? 0) as 0 | 1;
   const targetPane: 0 | 1 = options?.openInSplit
@@ -715,10 +787,65 @@ export async function jumpToCodeLocation(
       : 0
     : sourcePane;
 
+  const sourceEntry = fromDocId
+    ? getAccurateDocPosition(fromDocId, options?.symbol)
+    : null;
+
+  useCodeNavStore.getState().closePeek();
+
   // ==================== 分栏并排打开模式 (openInSplit = true) ====================
-  // 核心保证：绝不把当前正在阅读的 sourceDoc 从 sourcePane 移走！
-  // 原分栏继续保留调用处，另一侧分栏 (targetPane) 打开并定位到目标函数。
+  // 核心保证：
+  // 1. 绝不把当前正在阅读的 sourceDoc 从 sourcePane 移走！
+  // 2. 绝不污染 sourcePane 的历史栈（因为 sourcePane 仍停留在原调用处未动）！
+  // 3. 将历史记录精确归入真正发生位置变化的 targetPane 栈中，保证在左/右栏点击「返回上一位置 / 前进下一位置」均在本栏内自洽回退与前进。
   if (options?.openInSplit) {
+    const wasTargetPaneVisible = appState.layout.split || targetPane === 0;
+    if (!wasTargetPaneVisible) {
+      useCodeNavStore.getState().clearPaneHistory(targetPane);
+    }
+
+    const prevTargetDocId = wasTargetPaneVisible
+      ? appState.activeIds[targetPane]
+      : null;
+    const prevTargetDoc = prevTargetDocId ? getDocById(prevTargetDocId) : null;
+    const hasRealPrevTarget = Boolean(
+      prevTargetDoc && (prevTargetDoc.filePath || prevTargetDoc.content.trim()),
+    );
+    const prevTargetEntry =
+      hasRealPrevTarget && prevTargetDocId
+        ? getAccurateDocPosition(prevTargetDocId, options?.symbol)
+        : null;
+
+    // 辅助函数：为目标分栏记录跳转前的历史位置
+    const recordTargetPaneHistory = (destDocId: string, destFilePath: string | null) => {
+      const targetLocEntry: NavHistoryEntry = {
+        docId: destDocId,
+        filePath: destFilePath,
+        fileName: destFilePath ? fileName(destFilePath) : loc.fileName,
+        line: loc.line,
+        col: loc.col,
+      };
+      if (prevTargetEntry) {
+        if (!isSameHistoryLocation(prevTargetEntry, targetLocEntry)) {
+          useCodeNavStore.getState().pushHistory(targetPane, prevTargetEntry);
+        }
+      } else if (sourceEntry) {
+        // 若目标分栏此前为空/首次开启分栏，且从源文档分栏打开同一文件，将调用处行号绑定到目标栏文档压入目标栏后退栈
+        const fallbackEntry: NavHistoryEntry = {
+          ...sourceEntry,
+          docId:
+            !sourceEntry.filePath ||
+            (destFilePath &&
+              normalizePath(sourceEntry.filePath) === normalizePath(destFilePath))
+              ? destDocId
+              : sourceEntry.docId,
+        };
+        if (!isSameHistoryLocation(fallbackEntry, targetLocEntry)) {
+          useCodeNavStore.getState().pushHistory(targetPane, fallbackEntry);
+        }
+      }
+    };
+
     // 1. 先检查目标分栏 (targetPane) 中是否已经打开了该文件
     const existingInTargetPane = appState.docs.find(
       (d) =>
@@ -730,6 +857,7 @@ export async function jumpToCodeLocation(
     );
 
     if (existingInTargetPane) {
+      recordTargetPaneHistory(existingInTargetPane.id, existingInTargetPane.filePath);
       const nextActiveIds: [string | null, string | null] = [...appState.activeIds];
       if (sourceDoc) nextActiveIds[sourcePane] = sourceDoc.id;
       nextActiveIds[targetPane] = existingInTargetPane.id;
@@ -738,13 +866,11 @@ export async function jumpToCodeLocation(
         activeId: existingInTargetPane.id,
         layout: { ...s.layout, split: true, activePane: targetPane },
       }));
-      window.setTimeout(() => {
-        scrollEditorToLineAndFlash(existingInTargetPane.id, loc.line, loc.col);
-      }, 30);
+      scrollEditorToLineAndFlash(existingInTargetPane.id, loc.line, loc.col);
       return;
     }
 
-    // 2. 检查当前分栏 (sourcePane) 中是否有匹配的已打开文档
+    // 2. 检查当前已打开文档中是否有该文件，若有则在 targetPane 创建镜像分栏标签页（绝不抽走 sourcePane 的标签）
     const existingInSourcePane =
       (loc.docId ? getDocById(loc.docId) : null) ??
       (loc.path
@@ -754,49 +880,26 @@ export async function jumpToCodeLocation(
         : null);
 
     if (existingInSourcePane) {
-      // 若目标函数就在当前正在阅读的文档 (sourceDoc) 中，或源栏只有这一个标签：
-      // 在另一侧分栏 (targetPane) 创建一个镜像分栏标签页，实现左/右栏同时对照查看同一文件的调用处与函数定义！
-      const sourcePaneCount = appState.docs.filter(
-        (d) => (d.pane ?? 0) === sourcePane,
-      ).length;
-      if (existingInSourcePane.id === sourceDoc?.id || sourcePaneCount <= 1) {
-        const companionDoc = createDoc({
-          ...existingInSourcePane,
-          id: nextDocId(),
-          pane: targetPane,
-          cursorLine: loc.line,
-          cursorCol: loc.col,
-          scrollTop: 0,
-        });
-        const nextActiveIds: [string | null, string | null] = [...appState.activeIds];
-        nextActiveIds[sourcePane] = existingInSourcePane.id;
-        nextActiveIds[targetPane] = companionDoc.id;
-        useAppStore.setState((s) => ({
-          docs: [...s.docs, companionDoc],
-          activeIds: nextActiveIds,
-          activeId: companionDoc.id,
-          layout: { ...s.layout, split: true, activePane: targetPane },
-        }));
-        window.setTimeout(() => {
-          scrollEditorToLineAndFlash(companionDoc.id, loc.line, loc.col);
-        }, 50);
-        return;
-      }
-
-      // 若目标函数在源分栏的另一个非活动标签中，将该标签移到另一侧分栏并保持 sourceDoc 在原分栏激活
+      const companionDoc = createDoc({
+        ...existingInSourcePane,
+        id: nextDocId(),
+        pane: targetPane,
+        cursorLine: loc.line,
+        cursorCol: loc.col,
+        scrollTop: 0,
+      });
+      recordTargetPaneHistory(companionDoc.id, companionDoc.filePath);
       const nextActiveIds: [string | null, string | null] = [...appState.activeIds];
       if (sourceDoc) nextActiveIds[sourcePane] = sourceDoc.id;
-      nextActiveIds[targetPane] = existingInSourcePane.id;
+      nextActiveIds[targetPane] = companionDoc.id;
       useAppStore.setState((s) => ({
-        docs: s.docs.map((d) =>
-          d.id === existingInSourcePane.id ? { ...d, pane: targetPane } : d,
-        ),
+        docs: [...s.docs, companionDoc],
         activeIds: nextActiveIds,
-        activeId: existingInSourcePane.id,
+        activeId: companionDoc.id,
         layout: { ...s.layout, split: true, activePane: targetPane },
       }));
       window.setTimeout(() => {
-        scrollEditorToLineAndFlash(existingInSourcePane.id, loc.line, loc.col);
+        scrollEditorToLineAndFlash(companionDoc.id, loc.line, loc.col);
       }, 40);
       return;
     }
@@ -819,24 +922,46 @@ export async function jumpToCodeLocation(
             normalizePath(d.filePath) === normalizePath(loc.path!),
         );
       if (newlyOpened) {
+        recordTargetPaneHistory(newlyOpened.id, newlyOpened.filePath);
         window.setTimeout(() => {
           scrollEditorToLineAndFlash(newlyOpened.id, loc.line, loc.col);
-        }, 80);
+        }, 60);
       }
     }
     return;
   }
 
   // ==================== 当前栏普通跳转模式 (openInSplit = false) ====================
-  // 优先匹配当前分栏中的同文件标签，避免跨分栏挪动标签
+  // 记录当前分栏跳转前的位置到 sourcePane 的后退栈
+  if (sourceEntry) {
+    const targetCompare: NavHistoryEntry = {
+      docId: loc.docId ?? sourceEntry.docId,
+      filePath: loc.path ?? sourceEntry.filePath,
+      fileName: loc.fileName,
+      line: loc.line,
+      col: loc.col,
+    };
+    if (!isSameHistoryLocation(sourceEntry, targetCompare)) {
+      useCodeNavStore.getState().pushHistory(sourcePane, sourceEntry);
+    }
+  }
+
+  // 1. 优先匹配当前分栏 (sourcePane) 中已打开的同文件标签
   const existingInSamePane = appState.docs.find(
     (d) =>
       (d.pane ?? 0) === sourcePane &&
       ((loc.docId && d.id === loc.docId) ||
         (loc.path && d.filePath && normalizePath(d.filePath) === normalizePath(loc.path))),
   );
-  const existingAnywhere =
-    existingInSamePane ??
+
+  if (existingInSamePane) {
+    appState.activateDoc(existingInSamePane.id, sourcePane);
+    scrollEditorToLineAndFlash(existingInSamePane.id, loc.line, loc.col);
+    return;
+  }
+
+  // 2. 若当前处于双栏模式且该文件仅在另一栏打开，在当前分栏创建独立标签页，避免跨栏抢夺焦点或移动另一栏标签
+  const existingInOtherPane =
     (loc.docId ? getDocById(loc.docId) : null) ??
     (loc.path
       ? appState.docs.find(
@@ -844,27 +969,50 @@ export async function jumpToCodeLocation(
         ) ?? null
       : null);
 
-  if (existingAnywhere) {
-    const stayPane = (existingAnywhere.pane ?? sourcePane) as 0 | 1;
-    appState.activateDoc(existingAnywhere.id, stayPane);
-    window.setTimeout(() => {
-      scrollEditorToLineAndFlash(existingAnywhere.id, loc.line, loc.col);
-    }, 30);
+  if (existingInOtherPane) {
+    if (appState.layout.split && (existingInOtherPane.pane ?? 0) !== sourcePane) {
+      const companionInCurrentPane = createDoc({
+        ...existingInOtherPane,
+        id: nextDocId(),
+        pane: sourcePane,
+        cursorLine: loc.line,
+        cursorCol: loc.col,
+        scrollTop: 0,
+      });
+      const nextActiveIds: [string | null, string | null] = [...appState.activeIds];
+      nextActiveIds[sourcePane] = companionInCurrentPane.id;
+      useAppStore.setState((s) => ({
+        docs: [...s.docs, companionInCurrentPane],
+        activeIds: nextActiveIds,
+        activeId: companionInCurrentPane.id,
+        layout: { ...s.layout, activePane: sourcePane },
+      }));
+      window.setTimeout(() => {
+        scrollEditorToLineAndFlash(companionInCurrentPane.id, loc.line, loc.col);
+      }, 40);
+      return;
+    }
+
+    appState.activateDoc(existingInOtherPane.id, sourcePane);
+    scrollEditorToLineAndFlash(existingInOtherPane.id, loc.line, loc.col);
     return;
   }
 
-  // 目标是磁盘上的其它工程文件：在当前分栏打开文件后再定位行号
+  // 3. 目标是磁盘上的其它未打开工程文件：在当前分栏打开文件后再定位行号
   if (loc.path) {
     await openPath(loc.path, sourcePane);
     const newlyOpened = useAppStore
       .getState()
       .docs.find(
-        (d) => d.filePath && normalizePath(d.filePath) === normalizePath(loc.path!),
+        (d) =>
+          (d.pane ?? 0) === sourcePane &&
+          d.filePath &&
+          normalizePath(d.filePath) === normalizePath(loc.path!),
       );
     if (newlyOpened) {
       window.setTimeout(() => {
         scrollEditorToLineAndFlash(newlyOpened.id, loc.line, loc.col);
-      }, 80);
+      }, 60);
     }
   }
 }
@@ -883,8 +1031,8 @@ export async function goToSymbolDefinition(
   }
 
   const defs = await findSymbolLocations(docId, symbol, "defs");
-  const currentDoc = getDocById(docId);
-  const currentLine = currentDoc?.cursorLine ?? 1;
+  const currentPos = getAccurateDocPosition(docId);
+  const currentLine = currentPos?.line ?? 1;
 
   if (defs.length === 0) {
     // 若未识别出显式声明语法，自动回退展示该符号在工程中的所有出现位置
@@ -1008,67 +1156,166 @@ export async function openSymbolReferences(
   });
 }
 
-/** 导航历史后退（Alt + ← 或鼠标后退侧键） */
-export async function navigateHistoryBack(): Promise<boolean> {
-  const nav = useCodeNavStore.getState();
-  if (nav.backStack.length === 0) return false;
-
-  const target = nav.backStack[nav.backStack.length - 1];
-  const nextBack = nav.backStack.slice(0, -1);
-
-  const activeDocId = useAppStore.getState().activeId;
-  const activeDoc = activeDocId ? getDocById(activeDocId) : null;
-  const currentEntry: NavHistoryEntry | null = activeDoc
-    ? {
-        docId: activeDoc.id,
-        filePath: activeDoc.filePath,
-        fileName: activeDoc.filePath ? fileName(activeDoc.filePath) : "未命名文档",
-        line: activeDoc.cursorLine || 1,
-        col: activeDoc.cursorCol || 1,
-      }
-    : null;
-
-  useCodeNavStore.setState({
-    backStack: nextBack,
-    forwardStack: currentEntry ? [...nav.forwardStack, currentEntry] : nav.forwardStack,
-  });
-
-  await restoreHistoryEntry(target);
-  return true;
-}
-
-/** 导航历史前进（Alt + → 或鼠标前进侧键） */
-export async function navigateHistoryForward(): Promise<boolean> {
-  const nav = useCodeNavStore.getState();
-  if (nav.forwardStack.length === 0) return false;
-
-  const target = nav.forwardStack[nav.forwardStack.length - 1];
-  const nextForward = nav.forwardStack.slice(0, -1);
-
-  const activeDocId = useAppStore.getState().activeId;
-  const activeDoc = activeDocId ? getDocById(activeDocId) : null;
-  const currentEntry: NavHistoryEntry | null = activeDoc
-    ? {
-        docId: activeDoc.id,
-        filePath: activeDoc.filePath,
-        fileName: activeDoc.filePath ? fileName(activeDoc.filePath) : "未命名文档",
-        line: activeDoc.cursorLine || 1,
-        col: activeDoc.cursorCol || 1,
-      }
-    : null;
-
-  useCodeNavStore.setState({
-    backStack: currentEntry ? [...nav.backStack, currentEntry] : nav.backStack,
-    forwardStack: nextForward,
-  });
-
-  await restoreHistoryEntry(target);
-  return true;
-}
-
-async function restoreHistoryEntry(entry: NavHistoryEntry): Promise<void> {
+/** 导航历史后退（Alt + ← 或鼠标后退侧键，支持按指定分栏独立后退） */
+export async function navigateHistoryBack(explicitPane?: 0 | 1): Promise<boolean> {
   const appState = useAppStore.getState();
-  const existing =
+  const pane: 0 | 1 =
+    explicitPane ?? (appState.layout.split ? appState.layout.activePane : 0);
+  const nav = useCodeNavStore.getState();
+  const paneHist = nav.historyByPane[pane];
+  if (!paneHist || paneHist.backStack.length === 0) return false;
+
+  const activeDocIdInPane = appState.layout.split
+    ? appState.activeIds[pane] ?? appState.activeId
+    : appState.activeId;
+  const currentEntry = activeDocIdInPane
+    ? getAccurateDocPosition(activeDocIdInPane)
+    : null;
+
+  const workingBack = [...paneHist.backStack];
+  let target = workingBack.pop()!;
+  while (
+    workingBack.length > 0 &&
+    currentEntry &&
+    isSameHistoryLocation(target, currentEntry)
+  ) {
+    target = workingBack.pop()!;
+  }
+
+  if (currentEntry && isSameHistoryLocation(target, currentEntry)) {
+    useCodeNavStore.setState((s) => ({
+      historyByPane: {
+        ...s.historyByPane,
+        [pane]: {
+          ...s.historyByPane[pane],
+          backStack: workingBack,
+        },
+      },
+    }));
+    return false;
+  }
+
+  const nextForward = currentEntry
+    ? pushUniqueEntry(paneHist.forwardStack, currentEntry)
+    : paneHist.forwardStack;
+
+  useCodeNavStore.setState((s) => ({
+    historyByPane: {
+      ...s.historyByPane,
+      [pane]: {
+        backStack: workingBack,
+        forwardStack: nextForward,
+      },
+    },
+  }));
+
+  await restoreHistoryEntry(target, pane);
+  return true;
+}
+
+/** 导航历史前进（Alt + → 或鼠标前进侧键，支持按指定分栏独立前进） */
+export async function navigateHistoryForward(explicitPane?: 0 | 1): Promise<boolean> {
+  const appState = useAppStore.getState();
+  const pane: 0 | 1 =
+    explicitPane ?? (appState.layout.split ? appState.layout.activePane : 0);
+  const nav = useCodeNavStore.getState();
+  const paneHist = nav.historyByPane[pane];
+  if (!paneHist || paneHist.forwardStack.length === 0) return false;
+
+  const activeDocIdInPane = appState.layout.split
+    ? appState.activeIds[pane] ?? appState.activeId
+    : appState.activeId;
+  const currentEntry = activeDocIdInPane
+    ? getAccurateDocPosition(activeDocIdInPane)
+    : null;
+
+  const workingForward = [...paneHist.forwardStack];
+  let target = workingForward.pop()!;
+  while (
+    workingForward.length > 0 &&
+    currentEntry &&
+    isSameHistoryLocation(target, currentEntry)
+  ) {
+    target = workingForward.pop()!;
+  }
+
+  if (currentEntry && isSameHistoryLocation(target, currentEntry)) {
+    useCodeNavStore.setState((s) => ({
+      historyByPane: {
+        ...s.historyByPane,
+        [pane]: {
+          ...s.historyByPane[pane],
+          forwardStack: workingForward,
+        },
+      },
+    }));
+    return false;
+  }
+
+  const nextBack = currentEntry
+    ? pushUniqueEntry(paneHist.backStack, currentEntry)
+    : paneHist.backStack;
+
+  useCodeNavStore.setState((s) => ({
+    historyByPane: {
+      ...s.historyByPane,
+      [pane]: {
+        backStack: nextBack,
+        forwardStack: workingForward,
+      },
+    },
+  }));
+
+  await restoreHistoryEntry(target, pane);
+  return true;
+}
+
+async function restoreHistoryEntry(
+  entry: NavHistoryEntry,
+  pane: 0 | 1,
+): Promise<void> {
+  const appState = useAppStore.getState();
+
+  // 1. 优先在当前分栏 (pane) 内匹配原 docId 或同路径文档，杜绝跨分栏乱跳
+  const exactInPane = appState.docs.find(
+    (d) => d.id === entry.docId && (d.pane ?? 0) === pane,
+  );
+  const samePathInPane =
+    exactInPane ??
+    (entry.filePath
+      ? appState.docs.find(
+          (d) =>
+            (d.pane ?? 0) === pane &&
+            d.filePath &&
+            normalizePath(d.filePath) === normalizePath(entry.filePath!),
+        ) ?? null
+      : null);
+
+  if (samePathInPane) {
+    appState.activateDoc(samePathInPane.id, pane);
+    scrollEditorToLineAndFlash(samePathInPane.id, entry.line, entry.col);
+    return;
+  }
+
+  // 2. 若当前为单栏模式，允许直接匹配全局已打开文档
+  if (!appState.layout.split) {
+    const anyExisting =
+      getDocById(entry.docId) ??
+      (entry.filePath
+        ? appState.docs.find(
+            (d) =>
+              d.filePath && normalizePath(d.filePath) === normalizePath(entry.filePath!),
+          ) ?? null
+        : null);
+    if (anyExisting) {
+      appState.activateDoc(anyExisting.id, 0);
+      scrollEditorToLineAndFlash(anyExisting.id, entry.line, entry.col);
+      return;
+    }
+  }
+
+  // 3. 若双栏模式下该文件仅在另一侧分栏打开，在本分栏创建副本标签以保持本分栏独立回退
+  const otherPaneDoc =
     getDocById(entry.docId) ??
     (entry.filePath
       ? appState.docs.find(
@@ -1077,26 +1324,44 @@ async function restoreHistoryEntry(entry: NavHistoryEntry): Promise<void> {
         ) ?? null
       : null);
 
-  if (existing) {
-    appState.activateDoc(existing.id);
+  if (otherPaneDoc && appState.layout.split) {
+    const companion = createDoc({
+      ...otherPaneDoc,
+      id: nextDocId(),
+      pane,
+      cursorLine: entry.line,
+      cursorCol: entry.col,
+      scrollTop: 0,
+    });
+    const nextActiveIds: [string | null, string | null] = [...appState.activeIds];
+    nextActiveIds[pane] = companion.id;
+    useAppStore.setState((s) => ({
+      docs: [...s.docs, companion],
+      activeIds: nextActiveIds,
+      activeId: companion.id,
+      layout: { ...s.layout, activePane: pane },
+    }));
     window.setTimeout(() => {
-      scrollEditorToLineAndFlash(existing.id, entry.line, entry.col);
-    }, 30);
+      scrollEditorToLineAndFlash(companion.id, entry.line, entry.col);
+    }, 40);
     return;
   }
 
+  // 4. 从磁盘重新打开到目标分栏
   if (entry.filePath) {
-    await openPath(entry.filePath);
+    await openPath(entry.filePath, pane);
     const opened = useAppStore
       .getState()
       .docs.find(
         (d) =>
-          d.filePath && normalizePath(d.filePath) === normalizePath(entry.filePath!),
+          (d.pane ?? 0) === pane &&
+          d.filePath &&
+          normalizePath(d.filePath) === normalizePath(entry.filePath!),
       );
     if (opened) {
       window.setTimeout(() => {
         scrollEditorToLineAndFlash(opened.id, entry.line, entry.col);
-      }, 80);
+      }, 60);
     }
   }
 }
@@ -1220,20 +1485,21 @@ export function createCodeNavigationExtensions(docId: string): Extension[] {
       mousedown: (event, view) => {
         const doc = getDocById(docId);
         if (!doc || isMarkdownDoc(doc)) return false;
+        const pane = (doc.pane ?? 0) as 0 | 1;
 
-        // 鼠标侧键支持：后退 (button 3) / 前进 (button 4)
+        // 鼠标侧键支持：后退 (button 3) / 前进 (button 4)，严格作用于当前编辑器所在分栏
         if (event.button === 3) {
           event.preventDefault();
-          void navigateHistoryBack();
+          void navigateHistoryBack(pane);
           return true;
         }
         if (event.button === 4) {
           event.preventDefault();
-          void navigateHistoryForward();
+          void navigateHistoryForward(pane);
           return true;
         }
 
-        // Ctrl + 左键单击：直接转到定义（Ctrl + Alt + 左键单击：在右侧分栏打开定义）
+        // Ctrl + 左键单击：直接转到定义（Ctrl + Alt + 左键单击：在另一侧分栏打开定义）
         if (event.button === 0 && (event.ctrlKey || event.metaKey)) {
           const pos = view.posAtCoords({ x: event.clientX, y: event.clientY });
           if (pos !== null) {

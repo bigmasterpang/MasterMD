@@ -90,7 +90,7 @@ function buildExtensions(
     wrapCompartment.of(settings.wordWrap ? EditorView.lineWrapping : []),
     readOnlyCompartment.of(EditorState.readOnly.of(Boolean(doc?.readOnly))),
     placeholder(isMd ? "在此输入 Markdown 内容……" : "在此输入内容……"),
-    themeCompartment.of(createEditorTheme(isDark)),
+    themeCompartment.of(createEditorTheme(isDark, settings.colorblindMode)),
     keymap.of([
       indentWithTab,
       ...closeBracketsKeymap,
@@ -123,6 +123,7 @@ export function CodeMirrorEditor({ docId, isDark }: Props) {
   const showLineNumbers = useSettingsStore((s) => s.showLineNumbers);
   const wordWrap = useSettingsStore((s) => s.wordWrap);
   const tabSize = useSettingsStore((s) => s.tabSize);
+  const colorblindMode = useSettingsStore((s) => s.colorblindMode);
 
   /* ------------------------------ 初始化 ------------------------------ */
   useEffect(() => {
@@ -345,8 +346,10 @@ export function CodeMirrorEditor({ docId, isDark }: Props) {
   useEffect(() => {
     const view = viewRef.current;
     if (!view) return;
-    view.dispatch({ effects: themeCompartment.reconfigure(createEditorTheme(isDark)) });
-  }, [isDark]);
+    view.dispatch({
+      effects: themeCompartment.reconfigure(createEditorTheme(isDark, colorblindMode)),
+    });
+  }, [isDark, colorblindMode]);
 
   // 只读状态变化（例如文件重新加载后判定为大文件）
   const readOnly = useAppStore(

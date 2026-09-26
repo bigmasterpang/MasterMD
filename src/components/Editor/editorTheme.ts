@@ -49,6 +49,55 @@ const darkHighlight = HighlightStyle.define([
   { tag: t.strikethrough, textDecoration: "line-through" },
 ]);
 
+/**
+ * 红绿色弱友好语法高亮（基于 Okabe-Ito 无障碍色板）：
+ * - 避免将红与绿、橙红与黄绿用于需要区分的语法成分
+ * - 关键字采用洋红紫 + 半粗体（兼具色相与字重双重线索）
+ * - 字符串采用高辨识度天青蓝，数字与常量采用暖琥珀金，函数采用靛紫
+ * - 错误语法附加波浪下划线，不依赖纯颜色识别
+ */
+const lightColorblindHighlight = HighlightStyle.define([
+  { tag: t.comment, color: "#64748b", fontStyle: "italic" },
+  { tag: [t.keyword, t.moduleKeyword, t.controlKeyword], color: "#9d174d", fontWeight: "600" },
+  { tag: [t.string, t.special(t.string)], color: "#005a8d" },
+  { tag: [t.number, t.bool, t.null, t.atom], color: "#b45309", fontWeight: "500" },
+  { tag: [t.heading, t.heading1, t.heading2, t.heading3], color: "#0072b2", fontWeight: "700" },
+  { tag: [t.strong], fontWeight: "700" },
+  { tag: [t.emphasis], fontStyle: "italic" },
+  { tag: [t.link, t.url], color: "#0072b2", textDecoration: "underline" },
+  { tag: [t.monospace], color: "#005a8d" },
+  { tag: [t.quote], color: "#475569" },
+  { tag: [t.list, t.meta], color: "#6d28d9" },
+  { tag: [t.tagName, t.typeName, t.className], color: "#0f766e", fontWeight: "600" },
+  { tag: [t.attributeName, t.propertyName], color: "#0369a1" },
+  { tag: [t.variableName, t.definition(t.variableName)], color: "#c2410c" },
+  { tag: [t.function(t.variableName), t.labelName], color: "#6d28d9", fontWeight: "500" },
+  { tag: [t.operator, t.punctuation, t.separator], color: "#475569" },
+  { tag: t.invalid, color: "#d55e00", textDecoration: "underline wavy" },
+  { tag: t.strikethrough, textDecoration: "line-through" },
+]);
+
+const darkColorblindHighlight = HighlightStyle.define([
+  { tag: t.comment, color: "#94a3b8", fontStyle: "italic" },
+  { tag: [t.keyword, t.moduleKeyword, t.controlKeyword], color: "#f472b6", fontWeight: "600" },
+  { tag: [t.string, t.special(t.string)], color: "#56b4e9" },
+  { tag: [t.number, t.bool, t.null, t.atom], color: "#f59e0b", fontWeight: "500" },
+  { tag: [t.heading, t.heading1, t.heading2, t.heading3], color: "#56b4e9", fontWeight: "700" },
+  { tag: [t.strong], fontWeight: "700" },
+  { tag: [t.emphasis], fontStyle: "italic" },
+  { tag: [t.link, t.url], color: "#56b4e9", textDecoration: "underline" },
+  { tag: [t.monospace], color: "#56b4e9" },
+  { tag: [t.quote], color: "#94a3b8" },
+  { tag: [t.list, t.meta], color: "#c084fc" },
+  { tag: [t.tagName, t.typeName, t.className], color: "#38bdf8", fontWeight: "600" },
+  { tag: [t.attributeName, t.propertyName], color: "#7dd3fc" },
+  { tag: [t.variableName, t.definition(t.variableName)], color: "#fbbf24" },
+  { tag: [t.function(t.variableName), t.labelName], color: "#c084fc", fontWeight: "500" },
+  { tag: [t.operator, t.punctuation, t.separator], color: "#94a3b8" },
+  { tag: t.invalid, color: "#ff6e40", textDecoration: "underline wavy" },
+  { tag: t.strikethrough, textDecoration: "line-through" },
+]);
+
 /** 基础主题（背景/光标等由 styles.css 统一接管，这里只补 CodeMirror 内部变量） */
 const baseTheme = EditorView.theme({
   "&": { height: "100%", fontSize: "var(--editor-size)" },
@@ -71,6 +120,13 @@ const baseTheme = EditorView.theme({
   ".cm-searchMatch.cm-searchMatch-selected": { background: "var(--accent)" },
 });
 
-export function createEditorTheme(dark: boolean): Extension[] {
-  return [baseTheme, syntaxHighlighting(dark ? darkHighlight : lightHighlight)];
+export function createEditorTheme(dark: boolean, colorblindMode = false): Extension[] {
+  const style = colorblindMode
+    ? dark
+      ? darkColorblindHighlight
+      : lightColorblindHighlight
+    : dark
+      ? darkHighlight
+      : lightHighlight;
+  return [baseTheme, syntaxHighlighting(style)];
 }

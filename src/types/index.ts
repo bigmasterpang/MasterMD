@@ -172,6 +172,8 @@ export interface Settings {
   autoCheckUpdate: boolean;
   /** 大纲显示的最大标题等级（1-6） */
   outlineMaxLevel: number;
+  /** 红绿色弱友好模式（采用 Okabe-Ito 无障碍配色与非纯色视觉标识） */
+  colorblindMode: boolean;
 }
 
 /** 未保存变更弹窗结果 */

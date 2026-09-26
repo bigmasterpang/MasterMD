@@ -21,12 +21,18 @@ const THEMES: Array<{ value: ThemeMode; label: string }> = [
   { value: "system", label: "跟随系统" },
 ];
 
-const ACCENTS: Array<{ value: AccentName; label: string; color: string }> = [
-  { value: "blue", label: "蓝", color: "#2563eb" },
-  { value: "violet", label: "紫", color: "#7c3aed" },
-  { value: "emerald", label: "绿", color: "#059669" },
-  { value: "amber", label: "橙", color: "#d97706" },
-  { value: "rose", label: "红", color: "#e11d48" },
+const ACCENTS: Array<{
+  value: AccentName;
+  label: string;
+  cbLabel: string;
+  color: string;
+  cbColor: string;
+}> = [
+  { value: "blue", label: "蓝", cbLabel: "钴蓝", color: "#2563eb", cbColor: "#2563eb" },
+  { value: "violet", label: "紫", cbLabel: "靛紫", color: "#7c3aed", cbColor: "#7c3aed" },
+  { value: "emerald", label: "绿", cbLabel: "天青", color: "#059669", cbColor: "#0284c7" },
+  { value: "amber", label: "橙", cbLabel: "琥珀", color: "#d97706", cbColor: "#d97706" },
+  { value: "rose", label: "红", cbLabel: "洋红", color: "#e11d48", cbColor: "#c026d3" },
 ];
 
 const FONT_PRESETS = [
@@ -77,7 +83,7 @@ export function SettingsModal() {
       }
     >
       <div className="space-y-5">
-        <Section title="外观">
+        <Section title="外观与无障碍">
           <Row label="主题">
             <Segmented
               items={THEMES}
@@ -86,23 +92,50 @@ export function SettingsModal() {
             />
           </Row>
           <Row label="配色方案">
-            <div className="flex items-center gap-2">
-              {ACCENTS.map((accent) => (
-                <button
-                  key={accent.value}
-                  type="button"
-                  title={accent.label}
-                  onClick={() => update({ accent: accent.value })}
-                  className={`h-6 w-6 rounded-full border-2 transition-transform hover:scale-110 ${
-                    settings.accent === accent.value
-                      ? "border-fg"
-                      : "border-transparent"
-                  }`}
-                  style={{ background: accent.color }}
-                />
-              ))}
+            <div className="flex flex-wrap items-center gap-1.5">
+              {ACCENTS.map((accent) => {
+                const active = settings.accent === accent.value;
+                const displayColor = settings.colorblindMode ? accent.cbColor : accent.color;
+                const displayLabel = settings.colorblindMode ? accent.cbLabel : accent.label;
+                return (
+                  <button
+                    key={accent.value}
+                    type="button"
+                    title={displayLabel}
+                    onClick={() => update({ accent: accent.value })}
+                    className={`flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-[11.5px] transition-all ${
+                      active
+                        ? "border-accent bg-accent-soft font-medium text-fg"
+                        : "border-line bg-input text-muted hover:border-line-strong hover:text-fg"
+                    }`}
+                  >
+                    <span
+                      className="h-3 w-3 shrink-0 rounded-full border border-black/10"
+                      style={{ background: displayColor }}
+                    />
+                    <span>{displayLabel}</span>
+                  </button>
+                );
+              })}
             </div>
           </Row>
+          <div className="rounded-lg border border-line bg-panel/60 px-3 py-2">
+            <div className="flex items-center justify-between gap-4">
+              <div className="min-w-0">
+                <div className="flex items-center gap-1.5 text-[12px] font-medium text-fg">
+                  <Icon name="eye" size={13} className="text-accent" />
+                  <span>色弱友好模式（红绿色弱优化）</span>
+                </div>
+                <div className="mt-0.5 text-[11px] leading-relaxed text-faint">
+                  启用 Okabe-Ito 无障碍高辨识度色板（以天青蓝、琥珀金、洋红紫替代易混淆的红绿对比），并为代码语法高亮、提示块及 PDF 批注增加字重与线条样式辅助标识。
+                </div>
+              </div>
+              <Toggle
+                checked={settings.colorblindMode}
+                onChange={(value) => update({ colorblindMode: value })}
+              />
+            </div>
+          </div>
           <Row label={`字号（${settings.fontSize}px）`}>
             <input
               type="range"
@@ -308,7 +341,7 @@ function Toggle({
       role="switch"
       aria-checked={checked}
       onClick={() => onChange(!checked)}
-      className={`relative h-5 w-9 rounded-full transition-colors ${
+      className={`relative h-5 w-9 shrink-0 rounded-full transition-colors ${
         checked ? "bg-accent" : "bg-line-strong"
       }`}
     >

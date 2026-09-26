@@ -970,4 +970,156 @@ html.dark .hljs-meta {
   background-clip: content-box;
 }
 
+/* ------------------------------------------------------------------ */
+/* 红绿色弱友好模式（Okabe-Ito 高辨识度无障碍色板 + 线条纹理辅助区分） */
+/* ------------------------------------------------------------------ */
+html[data-colorblind="true"] {
+  --success: #0072b2;
+  --warning: #b45309;
+  --danger: #d55e00;
+  --danger-soft: rgba(213, 94, 0, 0.14);
+}
+html.dark[data-colorblind="true"] {
+  --success: #56b4e9;
+  --warning: #f0e442;
+  --danger: #ff6e40;
+  --danger-soft: rgba(255, 110, 64, 0.18);
+}
+
+/* 当开启色弱模式且选择绿/红强调色时，自动平移为高辨识度的青蓝/洋红色相 */
+html[data-colorblind="true"][data-accent="emerald"] {
+  --accent: #0284c7;
+  --accent-soft: rgba(2, 132, 199, 0.14);
+  --accent-soft-strong: rgba(2, 132, 199, 0.22);
+}
+html.dark[data-colorblind="true"][data-accent="emerald"] {
+  --accent: #38bdf8;
+  --accent-soft: rgba(56, 189, 248, 0.18);
+  --accent-soft-strong: rgba(56, 189, 248, 0.28);
+}
+html[data-colorblind="true"][data-accent="rose"] {
+  --accent: #c026d3;
+  --accent-soft: rgba(192, 38, 211, 0.14);
+  --accent-soft-strong: rgba(192, 38, 211, 0.22);
+}
+html.dark[data-colorblind="true"][data-accent="rose"] {
+  --accent: #e879f9;
+  --accent-soft: rgba(232, 121, 249, 0.18);
+  --accent-soft-strong: rgba(232, 121, 249, 0.28);
+}
+
+/* Markdown 提示块：替换易混淆的红绿并增加双线/虚线/粗实线左边框纹理区分 */
+html[data-colorblind="true"] .md-body .callout-tip,
+html[data-colorblind="true"] .md-body .callout-success {
+  --callout-accent: #0284c7;
+  --callout-fg: #0369a1;
+  border-left-style: double;
+  border-left-width: 5px;
+}
+html[data-colorblind="true"] .md-body .callout-warning {
+  --callout-accent: #d97706;
+  --callout-fg: #b45309;
+  border-left-style: dashed;
+  border-left-width: 4px;
+}
+html[data-colorblind="true"] .md-body .callout-caution,
+html[data-colorblind="true"] .md-body .callout-danger {
+  --callout-accent: #d55e00;
+  --callout-fg: #c2410c;
+  border-left-style: solid;
+  border-left-width: 5px;
+}
+html.dark[data-colorblind="true"] .md-body .callout-tip,
+html.dark[data-colorblind="true"] .md-body .callout-success {
+  --callout-fg: #38bdf8;
+}
+html.dark[data-colorblind="true"] .md-body .callout-warning {
+  --callout-fg: #facc15;
+}
+html.dark[data-colorblind="true"] .md-body .callout-caution,
+html.dark[data-colorblind="true"] .md-body .callout-danger {
+  --callout-fg: #ff6e40;
+}
+
+/* Markdown 代码块语法高亮（Okabe-Ito 色板 + 关键字加粗 + 删除线辅助） */
+html[data-colorblind="true"] .hljs-keyword,
+html[data-colorblind="true"] .hljs-selector-tag,
+html[data-colorblind="true"] .hljs-literal,
+html[data-colorblind="true"] .hljs-doctag,
+html[data-colorblind="true"] .hljs-name {
+  color: #9d174d;
+  font-weight: 600;
+}
+html[data-colorblind="true"] .hljs-string,
+html[data-colorblind="true"] .hljs-regexp,
+html[data-colorblind="true"] .hljs-attribute,
+html[data-colorblind="true"] .hljs-meta .hljs-string {
+  color: #005a8d;
+}
+html[data-colorblind="true"] .hljs-number,
+html[data-colorblind="true"] .hljs-variable,
+html[data-colorblind="true"] .hljs-template-variable,
+html[data-colorblind="true"] .hljs-type,
+html[data-colorblind="true"] .hljs-selector-attr,
+html[data-colorblind="true"] .hljs-selector-pseudo {
+  color: #b45309;
+}
+html[data-colorblind="true"] .hljs-title,
+html[data-colorblind="true"] .hljs-section,
+html[data-colorblind="true"] .hljs-title.class_,
+html[data-colorblind="true"] .hljs-title.function_ {
+  color: #6d28d9;
+  font-weight: 600;
+}
+html[data-colorblind="true"] .hljs-addition {
+  color: #005a8d;
+  background: rgba(0, 114, 178, 0.12);
+  border-bottom: 1px dashed #0072b2;
+}
+html[data-colorblind="true"] .hljs-deletion {
+  color: #d55e00;
+  background: rgba(213, 94, 0, 0.12);
+  text-decoration: line-through;
+}
+
+html.dark[data-colorblind="true"] .hljs-keyword,
+html.dark[data-colorblind="true"] .hljs-selector-tag,
+html.dark[data-colorblind="true"] .hljs-literal,
+html.dark[data-colorblind="true"] .hljs-doctag,
+html.dark[data-colorblind="true"] .hljs-name {
+  color: #f472b6;
+  font-weight: 600;
+}
+html.dark[data-colorblind="true"] .hljs-string,
+html.dark[data-colorblind="true"] .hljs-regexp,
+html.dark[data-colorblind="true"] .hljs-attribute,
+html.dark[data-colorblind="true"] .hljs-meta .hljs-string {
+  color: #56b4e9;
+}
+html.dark[data-colorblind="true"] .hljs-number,
+html.dark[data-colorblind="true"] .hljs-variable,
+html.dark[data-colorblind="true"] .hljs-template-variable,
+html.dark[data-colorblind="true"] .hljs-type,
+html.dark[data-colorblind="true"] .hljs-selector-attr,
+html.dark[data-colorblind="true"] .hljs-selector-pseudo {
+  color: #fbbf24;
+}
+html.dark[data-colorblind="true"] .hljs-title,
+html.dark[data-colorblind="true"] .hljs-section,
+html.dark[data-colorblind="true"] .hljs-title.class_,
+html.dark[data-colorblind="true"] .hljs-title.function_ {
+  color: #c084fc;
+  font-weight: 600;
+}
+html.dark[data-colorblind="true"] .hljs-addition {
+  color: #56b4e9;
+  background: rgba(86, 180, 233, 0.16);
+  border-bottom: 1px dashed #56b4e9;
+}
+html.dark[data-colorblind="true"] .hljs-deletion {
+  color: #ff6e40;
+  background: rgba(255, 110, 64, 0.16);
+  text-decoration: line-through;
+}
+
 

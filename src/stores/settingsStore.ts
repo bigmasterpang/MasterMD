@@ -17,6 +17,7 @@ export const DEFAULT_SETTINGS: Settings = {
   shortcuts: { ...DEFAULT_SHORTCUTS },
   autoCheckUpdate: true,
   outlineMaxLevel: 6,
+  colorblindMode: false,
 };
 
 interface SettingsStore extends Settings {
@@ -51,6 +52,9 @@ function clampSettings(patch: Partial<Settings>): Partial<Settings> {
   }
   if (typeof out.outlineMaxLevel === "number") {
     out.outlineMaxLevel = Math.min(6, Math.max(1, Math.round(out.outlineMaxLevel)));
+  }
+  if (out.colorblindMode !== undefined) {
+    out.colorblindMode = Boolean(out.colorblindMode);
   }
   if (out.shortcuts) {
     const merged = { ...DEFAULT_SHORTCUTS };
@@ -89,5 +93,6 @@ export function pickSettings(state: SettingsStore): Settings {
     shortcuts: state.shortcuts,
     autoCheckUpdate: state.autoCheckUpdate,
     outlineMaxLevel: state.outlineMaxLevel,
+    colorblindMode: state.colorblindMode,
   };
 }

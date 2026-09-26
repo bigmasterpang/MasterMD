@@ -467,6 +467,7 @@ function PdfAnnotationsView({
   const [filterType, setFilterType] = useState<"all" | "highlight" | "note">("all");
   const [searchText, setSearchText] = useState("");
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const colorblindMode = useSettingsStore((s) => s.colorblindMode);
 
   // 合并高亮与便签数据
   const allItems = useMemo<AnnotationUnifiedItem[]>(() => {
@@ -776,9 +777,13 @@ function PdfAnnotationsView({
                         <span
                           className={`h-1.5 w-1.5 rounded-full ${
                             item.color === "green"
-                              ? "bg-green-500"
+                              ? colorblindMode
+                                ? "bg-sky-400"
+                                : "bg-green-500"
                               : item.color === "pink"
-                                ? "bg-pink-500"
+                                ? colorblindMode
+                                  ? "bg-purple-400"
+                                  : "bg-pink-500"
                                 : "bg-amber-400"
                           }`}
                         />

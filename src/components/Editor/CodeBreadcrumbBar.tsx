@@ -6,11 +6,11 @@ import { analyzeSymbols, type NavItem } from "../../utils/outline";
 import { fileName, isMarkdownDoc } from "../../utils/filePath";
 import {
   goToSymbolDefinition,
+  jumpToLineInDoc,
   navigateHistoryBack,
   navigateHistoryForward,
   openSymbolReferences,
   peekSymbolDefinition,
-  scrollEditorToLineAndFlash,
   useCodeNavStore,
 } from "../../utils/codeNavigation";
 
@@ -20,16 +20,17 @@ interface Props {
 
 /**
  * 代码查看器顶部面包屑与符号导航栏：
- * - 历史后退 / 前进 (Alt+← / Alt+→)
+ * - 历史后退 / 前进 (Alt+← / Alt+→，按各自分栏独立维护历史栈)
  * - 文件名 › 所在类/结构体 › 当前函数 (点击可快速切换本文件任意函数)
  * - 光标下符号快捷操作：转到定义 (F12) · 速览定义 (Alt+F12) · 查找引用 (Shift+F12)
  * - 当前窗口文档独立缩放百分比指示器
  */
 export function CodeBreadcrumbBar({ docId }: Props) {
   const doc = useAppStore((s) => s.docs.find((d) => d.id === docId) ?? null);
+  const pane = ((doc?.pane ?? 0) as 0 | 1);
   const defaultFontSize = useSettingsStore((s) => s.fontSize);
-  const backStack = useCodeNavStore((s) => s.backStack);
-  const forwardStack = useCodeNavStore((s) => s.forwardStack);
+  const backStack = useCodeNavStore((s) => s.historyByPane[pane].backStack);
+  const forwardStack = useCodeNavStore((s) => s.historyByPane[pane].forwardStack);
   const activeSymbol = useCodeNavStore((s) => s.activeSymbol);
 
   const [symbolMenuOpen, setSymbolMenuOpen] = useState(false);
@@ -86,7 +87,7 @@ export function CodeBreadcrumbBar({ docId }: Props) {
         <button
           type="button"
           disabled={backStack.length === 0}
-          onClick={() => void navigateHistoryBack()}
+          onClick={() => void navigateHistoryBack(pane)}
           title={
             lastBack
               ? `返回上一位置: ${lastBack.fileName}:${lastBack.line} (Alt+←)`
@@ -99,7 +100,7 @@ export function CodeBreadcrumbBar({ docId }: Props) {
         <button
           type="button"
           disabled={forwardStack.length === 0}
-          onClick={() => void navigateHistoryForward()}
+          onClick={() => void navigateHistoryForward(pane)}
           title={
             lastForward
               ? `前进下一位置: ${lastForward.fileName}:${lastForward.line} (Alt+→)`
@@ -126,7 +127,9 @@ export function CodeBreadcrumbBar({ docId }: Props) {
             <Icon name="chevron-right" size={11} className="shrink-0 text-faint" />
             <button
               type="button"
-              onClick={() => scrollEditorToLineAndFlash(docId, currentContainer.line)}
+              onClick={() =>
+                jumpToLineInDoc(docId, currentContainer.line, 1, currentContainer.text)
+              }
               className="flex items-center gap-1 truncate rounded px-1 py-0.5 text-muted hover:bg-hover hover:text-fg"
               title={`跳转到 ${currentContainer.text} (行 ${currentContainer.line})`}
             >
@@ -165,7 +168,7 @@ export function CodeBreadcrumbBar({ docId }: Props) {
                       type="button"
                       onClick={() => {
                         setSymbolMenuOpen(false);
-                        scrollEditorToLineAndFlash(docId, sym.line);
+                        jumpToLineInDoc(docId, sym.line, 1, sym.text);
                       }}
                       className={`flex w-full items-center justify-between gap-2 rounded px-2 py-1 text-left text-[11.5px] transition-colors ${
                         isCurrent

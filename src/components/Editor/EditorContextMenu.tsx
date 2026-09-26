@@ -60,9 +60,10 @@ export function EditorContextMenu({
   onClose,
 }: Props) {
   const doc = useAppStore((s) => s.docs.find((d) => d.id === docId) ?? null);
+  const pane = (doc?.pane ?? 0) as 0 | 1;
   const isMd = isMarkdownDoc(doc);
-  const backCount = useCodeNavStore((s) => s.backStack.length);
-  const forwardCount = useCodeNavStore((s) => s.forwardStack.length);
+  const backCount = useCodeNavStore((s) => s.historyByPane[pane].backStack.length);
+  const forwardCount = useCodeNavStore((s) => s.historyByPane[pane].forwardStack.length);
 
   const groups = useMemo<ContextMenuItem[][]>(() => {
     const clipboard: ContextMenuItem[] = [
@@ -221,7 +222,7 @@ export function EditorContextMenu({
             label: "返回上一位置",
             hint: "Alt+←",
             icon: "arrow-left",
-            onClick: () => void navigateHistoryBack(),
+            onClick: () => void navigateHistoryBack(pane),
           });
         }
         if (forwardCount > 0) {
@@ -229,7 +230,7 @@ export function EditorContextMenu({
             label: "前进下一位置",
             hint: "Alt+→",
             icon: "arrow-right",
-            onClick: () => void navigateHistoryForward(),
+            onClick: () => void navigateHistoryForward(pane),
           });
         }
         codeGroups.push(navItems);

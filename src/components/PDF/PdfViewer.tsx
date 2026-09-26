@@ -5,6 +5,7 @@ import "pdfjs-dist/web/pdf_viewer.css";
 import { Icon } from "../common/Icon";
 import { ContextMenu, type ContextMenuItem } from "../common/ContextMenu";
 import { useAppStore } from "../../stores/appStore";
+import { useSettingsStore } from "../../stores/settingsStore";
 import { askPdfPassword, showMessage } from "../../stores/dialogStore";
 import { fileName } from "../../utils/filePath";
 import type { PdfHighlight, PdfNote } from "../../types";
@@ -579,7 +580,9 @@ export function PdfViewer({ docId, pane, isDark }: PdfViewerProps) {
       ],
       [
         {
-          label: "高亮标记 (黄色)",
+          label: useSettingsStore.getState().colorblindMode
+            ? "高亮标记 (明黄 · 实线)"
+            : "高亮标记 (黄色)",
           icon: "bold",
           onClick: () => {
             if (selectionMenu.pageRect && selectionMenu.clientRects.length > 0) {
@@ -597,7 +600,9 @@ export function PdfViewer({ docId, pane, isDark }: PdfViewerProps) {
           },
         },
         {
-          label: "高亮标记 (绿色)",
+          label: useSettingsStore.getState().colorblindMode
+            ? "高亮标记 (天青蓝 · 虚线)"
+            : "高亮标记 (绿色)",
           onClick: () => {
             if (selectionMenu.pageRect && selectionMenu.clientRects.length > 0) {
               addPdfHighlight(
@@ -614,7 +619,9 @@ export function PdfViewer({ docId, pane, isDark }: PdfViewerProps) {
           },
         },
         {
-          label: "高亮标记 (粉色)",
+          label: useSettingsStore.getState().colorblindMode
+            ? "高亮标记 (洋红紫 · 双线)"
+            : "高亮标记 (粉色)",
           onClick: () => {
             if (selectionMenu.pageRect && selectionMenu.clientRects.length > 0) {
               addPdfHighlight(
@@ -670,12 +677,12 @@ export function PdfViewer({ docId, pane, isDark }: PdfViewerProps) {
     ];
   }, [selectionMenu, docId, doc?.pdfHighlights]);
 
-  // 高亮项自身右键菜单（支持为高亮添加/编辑注释与删除）
   // 高亮项自身右键菜单（支持为高亮添加/编辑注释、切换颜色与删除）
   const highlightMenuGroups = useMemo<ContextMenuItem[][]>(() => {
     if (!highlightMenu) return [];
     const currentHl = doc?.pdfHighlights?.find((h) => h.id === highlightMenu.highlightId);
     const currentColor = currentHl?.color || "yellow";
+    const cbMode = useSettingsStore.getState().colorblindMode;
 
     return [
       [
@@ -699,7 +706,7 @@ export function PdfViewer({ docId, pane, isDark }: PdfViewerProps) {
       ],
       [
         {
-          label: "切换为黄色",
+          label: cbMode ? "切换为明黄 (实线)" : "切换为黄色",
           icon: currentColor === "yellow" ? "check" : undefined,
           onClick: () => {
             updatePdfHighlight(docId, highlightMenu.highlightId, { color: "yellow" });
@@ -707,7 +714,7 @@ export function PdfViewer({ docId, pane, isDark }: PdfViewerProps) {
           },
         },
         {
-          label: "切换为绿色",
+          label: cbMode ? "切换为天青蓝 (虚线)" : "切换为绿色",
           icon: currentColor === "green" ? "check" : undefined,
           onClick: () => {
             updatePdfHighlight(docId, highlightMenu.highlightId, { color: "green" });
@@ -715,7 +722,7 @@ export function PdfViewer({ docId, pane, isDark }: PdfViewerProps) {
           },
         },
         {
-          label: "切换为粉色",
+          label: cbMode ? "切换为洋红紫 (双线)" : "切换为粉色",
           icon: currentColor === "pink" ? "check" : undefined,
           onClick: () => {
             updatePdfHighlight(docId, highlightMenu.highlightId, { color: "pink" });
@@ -1359,6 +1366,7 @@ function PdfPage({
   const containerRef = useRef<HTMLDivElement>(null);
   const [baseSize, setBaseSize] = useState<{ width: number; height: number } | null>(null);
   const [isVisible, setIsVisible] = useState(false);
+  const cbMode = useSettingsStore((s) => s.colorblindMode);
 
   // 1. 固有尺寸（1.0 比例下）只获取一次，后续缩放时尺寸同步计算，杜绝外框与内容分离的两步缩放
   useEffect(() => {
@@ -1518,12 +1526,24 @@ function PdfPage({
               {highlights.map((hl) => {
                 const hasComment = Boolean(hl.comment && hl.comment.trim());
                 const firstRect = hl.rects[0];
-                const solidColor =
-                  hl.color === "green"
+                const solidColor = cbMode
+                  ? hl.color === "green"
+                    ? "#38bdf8"
+                    : hl.color === "pink"
+                      ? "#c084fc"
+                      : "#facc15"
+                  : hl.color === "green"
                     ? "#22c55e"
                     : hl.color === "pink"
                       ? "#ec4899"
                       : "#f59e0b";
+                const borderBottomStyle = cbMode
+                  ? hl.color === "green"
+                    ? "2px dashed #0284c7"
+                    : hl.color === "pink"
+                      ? "3px double #9333ea"
+                      : "2px solid #d97706"
+                  : undefined;
 
                 return (
                   <div key={hl.id} className="contents pointer-events-auto">
@@ -1541,6 +1561,7 @@ function PdfPage({
                             width: `${r.wPercent}%`,
                             height: `${r.hPercent}%`,
                             backgroundColor: solidColor,
+                            borderBottom: borderBottomStyle,
                           }}
                           className="absolute rounded-xs"
                         />
@@ -1656,6 +1677,7 @@ function PdfHighlightCommentCard({
 }) {
   const [comment, setComment] = useState(highlight.comment?.trim() || "");
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const colorblindMode = useSettingsStore((s) => s.colorblindMode);
 
   useEffect(() => {
     setComment(highlight.comment?.trim() || "");
@@ -1700,22 +1722,41 @@ function PdfHighlightCommentCard({
               <span>划词注释</span>
             </div>
             <div className="flex items-center gap-1">
-              {(["yellow", "green", "pink"] as const).map((c) => (
-                <button
-                  key={c}
-                  type="button"
-                  onClick={() => updatePdfHighlight(docId, highlight.id, { color: c })}
-                  className={`h-3 w-3 rounded-full border transition-transform ${
-                    highlight.color === c ? "scale-125 border-fg" : "border-line/60 hover:scale-110"
-                  } ${
-                    c === "yellow"
-                      ? "bg-amber-400"
-                      : c === "green"
-                        ? "bg-emerald-400"
-                        : "bg-pink-400"
-                  }`}
-                />
-              ))}
+              {(["yellow", "green", "pink"] as const).map((c) => {
+                const titleLabel = colorblindMode
+                  ? c === "yellow"
+                    ? "明黄 (实线)"
+                    : c === "green"
+                      ? "天青蓝 (虚线)"
+                      : "洋红紫 (双线)"
+                  : c === "yellow"
+                    ? "黄色"
+                    : c === "green"
+                      ? "绿色"
+                      : "粉色";
+                const dotClass = colorblindMode
+                  ? c === "yellow"
+                    ? "bg-yellow-400"
+                    : c === "green"
+                      ? "bg-sky-400"
+                      : "bg-purple-400"
+                  : c === "yellow"
+                    ? "bg-amber-400"
+                    : c === "green"
+                      ? "bg-emerald-400"
+                      : "bg-pink-400";
+                return (
+                  <button
+                    key={c}
+                    type="button"
+                    title={titleLabel}
+                    onClick={() => updatePdfHighlight(docId, highlight.id, { color: c })}
+                    className={`h-3.5 w-3.5 rounded-full border transition-transform ${
+                      highlight.color === c ? "scale-125 border-fg ring-1 ring-fg/30" : "border-line/60 hover:scale-110"
+                    } ${dotClass}`}
+                  />
+                );
+              })}
               <div className="mx-1 h-3 w-px bg-line/60" />
               <button
                 type="button"
@@ -1795,6 +1836,7 @@ function PdfNoteMarker({
 }) {
   const [content, setContent] = useState(note.content);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const colorblindMode = useSettingsStore((s) => s.colorblindMode);
 
   useEffect(() => {
     setContent(note.content);
@@ -1815,10 +1857,15 @@ function PdfNoteMarker({
       marker: "bg-sky-400 text-sky-950 border-sky-500 hover:bg-sky-300",
       card: "border-sky-300 bg-sky-50 text-neutral-900 dark:bg-neutral-900 dark:text-neutral-100 dark:border-sky-700/60",
     },
-    green: {
-      marker: "bg-emerald-400 text-emerald-950 border-emerald-500 hover:bg-emerald-300",
-      card: "border-emerald-300 bg-emerald-50 text-neutral-900 dark:bg-neutral-900 dark:text-neutral-100 dark:border-emerald-700/60",
-    },
+    green: colorblindMode
+      ? {
+          marker: "bg-orange-500 text-white border-orange-600 hover:bg-orange-400",
+          card: "border-orange-300 bg-orange-50 text-neutral-900 dark:bg-neutral-900 dark:text-neutral-100 dark:border-orange-700/60",
+        }
+      : {
+          marker: "bg-emerald-400 text-emerald-950 border-emerald-500 hover:bg-emerald-300",
+          card: "border-emerald-300 bg-emerald-50 text-neutral-900 dark:bg-neutral-900 dark:text-neutral-100 dark:border-emerald-700/60",
+        },
     purple: {
       marker: "bg-purple-400 text-purple-950 border-purple-500 hover:bg-purple-300",
       card: "border-purple-300 bg-purple-50 text-neutral-900 dark:bg-neutral-900 dark:text-neutral-100 dark:border-purple-700/60",
@@ -1872,24 +1919,39 @@ function PdfNoteMarker({
             </div>
             {/* 颜色切换小圆点 */}
             <div className="flex items-center gap-1">
-              {(["yellow", "blue", "green", "purple"] as const).map((c) => (
-                <button
-                  key={c}
-                  type="button"
-                  onClick={() => updatePdfNote(docId, note.id, { color: c })}
-                  className={`h-3 w-3 rounded-full border transition-transform ${
-                    note.color === c ? "scale-125 border-fg" : "border-line/60 hover:scale-110"
-                  } ${
-                    c === "yellow"
-                      ? "bg-amber-400"
-                      : c === "blue"
-                        ? "bg-sky-400"
-                        : c === "green"
-                          ? "bg-emerald-400"
-                          : "bg-purple-400"
-                  }`}
-                />
-              ))}
+              {(["yellow", "blue", "green", "purple"] as const).map((c) => {
+                const titleLabel =
+                  c === "yellow"
+                    ? "明黄"
+                    : c === "blue"
+                      ? "天青蓝"
+                      : c === "green"
+                        ? colorblindMode
+                          ? "朱砂橙"
+                          : "翠绿"
+                        : "洋红紫";
+                return (
+                  <button
+                    key={c}
+                    type="button"
+                    title={titleLabel}
+                    onClick={() => updatePdfNote(docId, note.id, { color: c })}
+                    className={`h-3.5 w-3.5 rounded-full border transition-transform ${
+                      note.color === c ? "scale-125 border-fg ring-1 ring-fg/30" : "border-line/60 hover:scale-110"
+                    } ${
+                      c === "yellow"
+                        ? "bg-amber-400"
+                        : c === "blue"
+                          ? "bg-sky-400"
+                          : c === "green"
+                            ? colorblindMode
+                              ? "bg-orange-500"
+                              : "bg-emerald-400"
+                            : "bg-purple-400"
+                    }`}
+                  />
+                );
+              })}
               <div className="mx-1 h-3 w-px bg-line/60" />
               <button
                 type="button"

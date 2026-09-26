@@ -7,6 +7,7 @@ export function useTheme(): boolean {
   const accent = useSettingsStore((s) => s.accent);
   const fontSize = useSettingsStore((s) => s.fontSize);
   const fontFamily = useSettingsStore((s) => s.fontFamily);
+  const colorblindMode = useSettingsStore((s) => s.colorblindMode);
   const [systemDark, setSystemDark] = useState(() =>
     typeof window !== "undefined"
       ? window.matchMedia("(prefers-color-scheme: dark)").matches
@@ -26,13 +27,14 @@ export function useTheme(): boolean {
     const root = document.documentElement;
     root.classList.toggle("dark", isDark);
     root.dataset.accent = accent;
+    root.dataset.colorblind = colorblindMode ? "true" : "false";
     root.style.setProperty("--editor-size", `${fontSize}px`);
     if (fontFamily.trim()) {
       root.style.setProperty("--font-mono", fontFamily.trim());
     } else {
       root.style.removeProperty("--font-mono");
     }
-  }, [isDark, accent, fontSize, fontFamily]);
+  }, [isDark, accent, fontSize, fontFamily, colorblindMode]);
 
   return isDark;
 }
